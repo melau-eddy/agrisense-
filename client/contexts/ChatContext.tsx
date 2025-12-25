@@ -1,14 +1,14 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
-import { Alert } from 'react-native';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import { Alert, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { 
   getChatCompletion, 
   availableModels, 
   validateApiKey,
+  testApiConnection,
   ChatMessage as GroqChatMessage,
   ChatCompletionOptions
 } from '@/services/groq';
-import ENV from '@/config/env';
 
 export interface Message {
   _id: string;
@@ -22,6 +22,7 @@ export interface Message {
   system?: boolean;
   pending?: boolean;
   error?: boolean;
+  retryCount?: number;
 }
 
 export interface ChatConfig {
@@ -35,42 +36,79 @@ interface ChatContextType {
   messages: Message[];
   config: ChatConfig;
   isTyping: boolean;
-  showChat: boolean; // Add this property
+  showChat: boolean;
+  apiStatus: 'connected' | 'disconnected' | 'checking';
   sendMessage: (text: string) => Promise<void>;
   clearChat: () => void;
-  updateConfig: (config: Partial<ChatConfig>) => void;
+  updateConfig: (config: Partial<ChatConfig>) => Promise<void>;
   validateApiKey: (key: string) => Promise<boolean>;
+  testConnection: () => Promise<void>;
   availableModels: typeof availableModels;
-  toggleChat: () => void; // Add this method
-  openChat: () => void; // Add this method
-  closeChat: () => void; // Add this method
+  toggleChat: () => void;
+  openChat: () => void;
+  closeChat: () => void;
+  retryMessage: (messageId: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 // Storage keys
 const STORAGE_KEYS = {
-  CHAT_HISTORY: '@agrisense_chat_history',
-  CHAT_CONFIG: '@agrisense_chat_config',
+  CHAT_HISTORY: '@agrisense_chat_history_v3',
+  CHAT_CONFIG: '@agrisense_chat_config_v3',
   CHAT_VISIBILITY: '@agrisense_chat_visibility',
 };
 
+// Default config with updated model
 const defaultConfig: ChatConfig = {
-  model: 'llama3-8b-8192',
+  model: 'llama-3.1-70b-versatile', // Updated to Llama 3.1 70B
   temperature: 0.7,
   maxTokens: 1024,
-  apiKey: ENV.GROQ_API_KEY,
 };
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [config, setConfig] = useState<ChatConfig>(defaultConfig);
   const [isTyping, setIsTyping] = useState(false);
-  const [showChat, setShowChat] = useState(true); // Default to true for full screen chat
+  const [showChat, setShowChat] = useState(true);
+  const [apiStatus, setApiStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // Check API connection on app start and when app comes to foreground
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        setApiStatus('checking');
+        const result = await testApiConnection();
+        setApiStatus(result.success ? 'connected' : 'disconnected');
+        
+        if (!result.success) {
+          console.warn('API connection check failed:', result.message);
+        }
+      } catch (error) {
+        setApiStatus('disconnected');
+        console.error('Connection check error:', error);
+      }
+    };
+
+    checkConnection();
+
+    // Listen for app state changes
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        checkConnection();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   // Initialize chat from storage
-  React.useEffect(() => {
+  useEffect(() => {
     if (isInitialized) return;
 
     const initializeChat = async () => {
@@ -136,33 +174,55 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, retryMessageId?: string) => {
     if (!text.trim() || isTyping) return;
 
-    // Create user message
-    const userMessage: Message = {
-      _id: Date.now().toString(),
-      text: text.trim(),
-      createdAt: new Date(),
-      user: {
-        _id: 'user',
-        name: 'You',
-      },
-    };
+    // Check API status before sending
+    if (apiStatus === 'disconnected') {
+      Alert.alert(
+        'Connection Issue',
+        'Cannot connect to AI service. Please check your internet connection and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
-    // Create pending bot message
-    const botMessage: Message = {
-      _id: (Date.now() + 1).toString(),
-      text: '',
-      createdAt: new Date(),
-      user: {
-        _id: 'bot',
-        name: 'AgriSense AI',
-      },
-      pending: true,
-    };
+    let newMessages: Message[];
+    
+    if (retryMessageId) {
+      // Retry existing message
+      newMessages = messages.map(msg => 
+        msg._id === retryMessageId 
+          ? { ...msg, pending: true, error: false }
+          : msg
+      );
+    } else {
+      // Create new message
+      const userMessage: Message = {
+        _id: Date.now().toString(),
+        text: text.trim(),
+        createdAt: new Date(),
+        user: {
+          _id: 'user',
+          name: 'You',
+        },
+      };
 
-    const newMessages = [...messages, userMessage, botMessage];
+      // Create pending bot message
+      const botMessage: Message = {
+        _id: (Date.now() + 1).toString(),
+        text: '',
+        createdAt: new Date(),
+        user: {
+          _id: 'bot',
+          name: 'AgriSense AI',
+        },
+        pending: true,
+      };
+
+      newMessages = [...messages, userMessage, botMessage];
+    }
+
     setMessages(newMessages);
     saveMessages(newMessages);
     
@@ -170,25 +230,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     try {
       // Prepare messages for Groq API
-      const groqMessages: GroqChatMessage[] = [
-        {
-          role: 'system',
-          content: `You are AgriSense AI, an agricultural expert assistant. You help farmers with:
-          1. Crop management advice
-          2. Weather impact analysis
-          3. Soil health recommendations
-          4. Pest and disease identification
-          5. Irrigation scheduling
-          6. Yield optimization
-          7. Sustainable farming practices
-          8. Market trends and pricing
-          
-          Be concise, practical, and data-driven. Use metric units.`
-        },
-        ...messages.slice(-10).map(msg => ({
+      const conversationMessages = messages
+        .filter(msg => !msg.pending && !msg.error)
+        .slice(-10)
+        .map(msg => ({
           role: msg.user._id === 'user' ? 'user' as const : 'assistant' as const,
           content: msg.text
-        })),
+        }));
+
+      const groqMessages: GroqChatMessage[] = [
+        ...conversationMessages,
         {
           role: 'user',
           content: text.trim()
@@ -203,19 +254,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         stream: false,
       };
 
-      // Use provided API key or environment key
-      const apiKey = config.apiKey || ENV.GROQ_API_KEY;
-      
-      if (!apiKey || apiKey === 'YOUR_GROQ_API_KEY_HERE') {
-        throw new Error('API key not configured. Please set up your Groq API key in Settings.');
-      }
-
       // Get response from Groq
       const response = await getChatCompletion(groqMessages, options);
 
       // Update bot message with response
       const updatedMessages = newMessages.map(msg => 
-        msg._id === botMessage._id 
+        msg.pending && msg.user._id === 'bot'
           ? { ...msg, text: response, pending: false }
           : msg
       );
@@ -228,12 +272,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       // Update bot message with error
       const errorMessages = newMessages.map(msg => 
-        msg._id === botMessage._id 
+        msg.pending && msg.user._id === 'bot'
           ? { 
               ...msg, 
-              text: `Error: ${error.message || 'Failed to get response'}. Please check your API key and try again.`,
+              text: `❌ ${error.message || 'Service temporarily unavailable. Please try again.'}`,
               pending: false,
-              error: true 
+              error: true,
+              retryCount: (msg.retryCount || 0) + 1
             }
           : msg
       );
@@ -241,12 +286,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setMessages(errorMessages);
       saveMessages(errorMessages);
 
-      // Show error alert
-      Alert.alert(
-        'Chat Error',
-        error.message || 'Failed to send message. Please try again.',
-        [{ text: 'OK' }]
-      );
+      // Show error alert for non-retry attempts
+      if (!retryMessageId) {
+        Alert.alert(
+          'Chat Error',
+          error.message || 'Failed to send message. Please try again.',
+          [
+            { text: 'OK' },
+            {
+              text: 'Retry',
+              onPress: () => sendMessage(text)
+            }
+          ]
+        );
+      }
     } finally {
       setIsTyping(false);
     }
@@ -255,11 +308,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const clearChat = () => {
     Alert.alert(
       'Clear Chat History',
-      'Are you sure you want to clear all chat messages?',
+      'Are you sure you want to clear all chat messages? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear',
+          text: 'Clear All',
           style: 'destructive',
           onPress: async () => {
             setMessages([]);
@@ -272,12 +325,59 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const updateConfig = async (newConfig: Partial<ChatConfig>) => {
     const updatedConfig = { ...config, ...newConfig };
+    
+    // Validate API key if it's being updated
+    if (newConfig.apiKey !== undefined) {
+      if (newConfig.apiKey && newConfig.apiKey.trim() !== '') {
+        const isValid = await validateApiKey(newConfig.apiKey.trim());
+        
+        if (isValid) {
+          // Test connection with new API key
+          setApiStatus('checking');
+          const result = await testApiConnection();
+          setApiStatus(result.success ? 'connected' : 'disconnected');
+          
+          if (result.success) {
+            Alert.alert('✅ Success', 'API key validated and connected successfully!');
+          } else {
+            Alert.alert('⚠️ Warning', 'API key validated but connection test failed.');
+          }
+        } else {
+          Alert.alert('❌ Invalid API Key', 'The provided API key appears to be invalid.');
+          return; // Don't save invalid key
+        }
+      }
+    }
+    
     setConfig(updatedConfig);
     await saveConfig(updatedConfig);
   };
 
   const validateApiKeyHandler = async (key: string): Promise<boolean> => {
     return await validateApiKey(key);
+  };
+
+  const testConnection = async () => {
+    try {
+      setApiStatus('checking');
+      const result = await testApiConnection();
+      setApiStatus(result.success ? 'connected' : 'disconnected');
+      
+      Alert.alert(
+        result.success ? '✅ Connection Successful' : '❌ Connection Failed',
+        result.message
+      );
+    } catch (error: any) {
+      setApiStatus('disconnected');
+      Alert.alert('Connection Test Failed', error.message || 'Unknown error');
+    }
+  };
+
+  const retryMessage = async (messageId: string) => {
+    const message = messages.find(msg => msg._id === messageId);
+    if (message && message.user._id === 'user') {
+      await sendMessage(message.text, messageId);
+    }
   };
 
   const toggleChat = () => {
@@ -301,14 +401,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     config,
     isTyping,
     showChat,
+    apiStatus,
     sendMessage,
     clearChat,
     updateConfig,
     validateApiKey: validateApiKeyHandler,
+    testConnection,
     availableModels,
     toggleChat,
     openChat,
     closeChat,
+    retryMessage,
   };
 
   return (

@@ -1,7 +1,7 @@
 // Environment configuration
 const ENV = {
   // Groq API Configuration
-  GROQ_API_KEY: process.env.EXPO_PUBLIC_GROQ_API_KEY || '',
+  GROQ_API_KEY: process.env.EXPO_PUBLIC_GROQ_API_KEY || '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',
   
   // Firebase Configuration (already in firebase.ts)
   // Add other API keys and secrets here

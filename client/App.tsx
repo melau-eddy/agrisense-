@@ -13,19 +13,23 @@ import { useTheme } from '@/hooks/useTheme';
 import LoginScreen from './screens/auth/LoginScreen';
 import SignupScreen from './screens/auth/SignupScreen';
 import DashboardScreen from './screens/DashboardScreen';
+import ChatScreen from './screens/ChatScreen';
+import ControlScreen from './screens/ControlScreen';
 import ProfileScreen from './screens/ProfileScreen';
-import ChatScreen from './screens/ChatScreen'; // Make sure this exists
+import SettingsScreen from './screens/SettingsScreen';
 import { Colors } from '@/constants/theme';
 
 export type RootStackParamList = {
   Login: undefined;
   Signup: undefined;
   MainTabs: undefined;
+  Settings: undefined;
 };
 
 export type MainTabParamList = {
   Dashboard: undefined;
   Chat: undefined;
+  Control: undefined;
   Profile: undefined;
 };
 
@@ -46,6 +50,8 @@ function MainTabs() {
             iconName = 'home';
           } else if (route.name === 'Chat') {
             iconName = 'message-circle';
+          } else if (route.name === 'Control') {
+            iconName = 'sliders';
           } else if (route.name === 'Profile') {
             iconName = 'user';
           }
@@ -57,12 +63,36 @@ function MainTabs() {
         tabBarStyle: {
           backgroundColor: theme.backgroundDefault,
           borderTopColor: theme.border,
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '500',
         },
       })}
     >
-      <Tab.Screen name="Dashboard" component={DashboardScreen} />
-      <Tab.Screen name="Chat" component={ChatScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen 
+        name="Dashboard" 
+        component={DashboardScreen}
+        options={{ tabBarLabel: 'Home' }}
+      />
+      <Tab.Screen 
+        name="Chat" 
+        component={ChatScreen}
+        options={{ tabBarLabel: 'AI Chat' }}
+      />
+      <Tab.Screen 
+        name="Control" 
+        component={ControlScreen}
+        options={{ tabBarLabel: 'Control' }}
+      />
+      <Tab.Screen 
+        name="Profile" 
+        component={ProfileScreen}
+        options={{ tabBarLabel: 'Profile' }}
+      />
     </Tab.Navigator>
   );
 }
@@ -71,7 +101,19 @@ function AppNavigator() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return null; // Or a loading screen
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="auto" />
+        <div style={{ 
+          flex: 1, 
+          backgroundColor: '#F8F9FA',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <div>Loading AgriSense...</div>
+        </div>
+      </SafeAreaProvider>
+    );
   }
 
   return (
@@ -84,7 +126,18 @@ function AppNavigator() {
         </>
       ) : (
         // Main app with tabs
-        <Stack.Screen name="MainTabs" component={MainTabs} />
+        <>
+          <Stack.Screen name="MainTabs" component={MainTabs} />
+          <Stack.Screen 
+            name="Settings" 
+            component={SettingsScreen}
+            options={{ 
+              headerShown: true,
+              headerTitle: 'AI Settings',
+              headerBackTitle: 'Back'
+            }}
+          />
+        </>
       )}
     </Stack.Navigator>
   );

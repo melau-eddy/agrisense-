@@ -54,7 +54,7 @@ export default function DashboardScreen() {
   const handleQuickAction = (action: string) => {
     switch (action) {
       case "irrigation":
-        Alert.alert("Irrigation", "Opening irrigation controls...");
+        navigation.navigate("Control"); // Updated to navigate to Control tab
         break;
       case "soil":
         Alert.alert("Soil Analysis", "Opening soil analysis...");
@@ -64,6 +64,9 @@ export default function DashboardScreen() {
         break;
       case "ai":
         handleAIChatPress();
+        break;
+      case "settings":
+        navigation.navigate("Settings");
         break;
     }
   };
@@ -100,12 +103,6 @@ export default function DashboardScreen() {
                   <ThemedText style={styles.badgeText}>{activeAlerts}</ThemedText>
                 </View>
               ) : null}
-            </Pressable>
-            <Pressable
-              onPress={() => navigation.navigate("Profile")}
-              style={[styles.profileButton, { backgroundColor: theme.backgroundSecondary }]}
-            >
-              <Feather name="user" size={20} color={theme.text} />
             </Pressable>
           </View>
         </View>
@@ -153,7 +150,7 @@ export default function DashboardScreen() {
             <ThemedText type="h3" style={styles.sectionTitle}>
               Overview
             </ThemedText>
-            <Pressable onPress={() => navigation.navigate("DashboardDetails")}>
+            <Pressable onPress={() => Alert.alert("Coming Soon", "Detailed view will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
                 View All
               </ThemedText>
@@ -213,7 +210,7 @@ export default function DashboardScreen() {
               <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.accent : Colors.light.accent}15` }]}>
                 <Feather name="droplet" size={24} color={isDark ? Colors.dark.accent : Colors.light.accent} />
               </View>
-              <ThemedText style={styles.quickActionText}>Irrigation</ThemedText>
+              <ThemedText style={styles.quickActionText}>Irrigation Control</ThemedText>
             </Pressable>
 
             <Pressable
@@ -238,12 +235,12 @@ export default function DashboardScreen() {
 
             <Pressable
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("ai")}
+              onPress={() => handleQuickAction("settings")}
             >
               <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.success : Colors.light.success}15` }]}>
-                <Feather name="message-circle" size={24} color={isDark ? Colors.dark.success : Colors.light.success} />
+                <Feather name="settings" size={24} color={isDark ? Colors.dark.success : Colors.light.success} />
               </View>
-              <ThemedText style={styles.quickActionText}>AI Chat</ThemedText>
+              <ThemedText style={styles.quickActionText}>AI Settings</ThemedText>
             </Pressable>
           </View>
         </View>
@@ -388,7 +385,7 @@ export default function DashboardScreen() {
             <ThemedText type="h3" style={styles.sectionTitle}>
               Field Summary
             </ThemedText>
-            <Pressable onPress={() => navigation.navigate("Fields")}>
+            <Pressable onPress={() => Alert.alert("Coming Soon", "All fields view will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
                 View All
               </ThemedText>
@@ -403,7 +400,7 @@ export default function DashboardScreen() {
             {mockFields.slice(0, 3).map((field, index) => (
               <Pressable
                 key={field.id}
-                onPress={() => navigation.navigate("FieldDetail", { fieldId: field.id })}
+                onPress={() => Alert.alert("Field Details", `Details for ${field.name}`)}
                 style={[
                   styles.summaryRow,
                   index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
@@ -432,17 +429,19 @@ export default function DashboardScreen() {
                   <View>
                     <ThemedText style={styles.summaryName}>{field.name}</ThemedText>
                     <ThemedText style={[styles.summaryAcres, { color: theme.textSecondary }]}>
-                      {field.acres} acres
+                      {field.acres} acres • {field.cropType}
                     </ThemedText>
                   </View>
                 </View>
                 <View style={styles.summaryRight}>
-                  <Feather
-                    name="droplet"
-                    size={14}
-                    color={isDark ? Colors.dark.accent : Colors.light.accent}
-                  />
-                  <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
+                  <View style={styles.moistureContainer}>
+                    <Feather
+                      name="droplet"
+                      size={14}
+                      color={isDark ? Colors.dark.accent : Colors.light.accent}
+                    />
+                    <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
+                  </View>
                   <Feather name="chevron-right" size={16} color={theme.textSecondary} />
                 </View>
               </Pressable>
@@ -468,7 +467,7 @@ export default function DashboardScreen() {
               <View style={styles.alertContent}>
                 <ThemedText style={styles.alertTitle}>Low moisture detected</ThemedText>
                 <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
-                  Field B - North Section
+                  Field B - North Section • 42% moisture
                 </ThemedText>
               </View>
               <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
@@ -483,7 +482,7 @@ export default function DashboardScreen() {
               <View style={styles.alertContent}>
                 <ThemedText style={styles.alertTitle}>Irrigation complete</ThemedText>
                 <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
-                  Field C - Automated system
+                  Field C - Automated system • 4,500L
                 </ThemedText>
               </View>
               <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
@@ -524,13 +523,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
-  },
-  profileButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
   },
   badge: {
     position: "absolute",
@@ -716,6 +708,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
+  },
+  moistureContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.xs,
   },
   summaryMoisture: {
     fontSize: 14,
