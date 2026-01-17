@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -6,9 +6,12 @@ import {
   Alert, 
   ScrollView,
   Modal,
-  TextInput 
+  TextInput,
+  Switch,
+  Linking,
+  Platform 
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useTheme } from '@/hooks/useTheme';
@@ -21,7 +24,32 @@ export default function ProfileScreen() {
   const { theme, isDark } = useTheme();
   const { user, logout, sendVerificationEmail, changePassword, updateUserProfile } = useAuth();
   
+  // State for modals
   const [changePasswordModal, setChangePasswordModal] = useState(false);
+  const [editProfileModal, setEditProfileModal] = useState(false);
+  const [notificationsModal, setNotificationsModal] = useState(false);
+  const [helpSupportModal, setHelpSupportModal] = useState(false);
+  
+  // State for edit profile
+  const [profileForm, setProfileForm] = useState({
+    displayName: user?.displayName || '',
+    phoneNumber: '', // You can add phone number to your user profile if needed
+  });
+  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
+  const [profileLoading, setProfileLoading] = useState(false);
+  
+  // State for notifications
+  const [notificationSettings, setNotificationSettings] = useState({
+    pushNotifications: true,
+    emailNotifications: true,
+    marketingEmails: false,
+    securityAlerts: true,
+    cropUpdates: true,
+    marketPrices: true,
+    weatherAlerts: true,
+  });
+  
+  // State for password change
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -29,6 +57,16 @@ export default function ProfileScreen() {
   });
   const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({});
   const [passwordLoading, setPasswordLoading] = useState(false);
+
+  // Load user data when component mounts
+  useEffect(() => {
+    if (user) {
+      setProfileForm({
+        displayName: user.displayName || '',
+        phoneNumber: '', // You can add this to your user object
+      });
+    }
+  }, [user]);
 
   const handleLogout = () => {
     Alert.alert(
@@ -64,6 +102,55 @@ export default function ProfileScreen() {
     }
   };
 
+  // Edit Profile Functions
+  const validateProfileForm = () => {
+    const errors: Record<string, string> = {};
+
+    if (!profileForm.displayName.trim()) {
+      errors.displayName = "Display name is required";
+    } else if (profileForm.displayName.length < 2) {
+      errors.displayName = "Display name must be at least 2 characters";
+    }
+
+    // Optional phone number validation
+    if (profileForm.phoneNumber && !/^[\+]?[1-9][\d]{0,15}$/.test(profileForm.phoneNumber.replace(/\D/g, ''))) {
+      errors.phoneNumber = "Please enter a valid phone number";
+    }
+
+    setProfileErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!validateProfileForm()) return;
+
+    setProfileLoading(true);
+    try {
+      await updateUserProfile({
+        displayName: profileForm.displayName.trim(),
+        // Add phoneNumber to your updateUserProfile function if needed
+      });
+      
+      Alert.alert(
+        "Profile Updated",
+        "Your profile has been updated successfully.",
+        [
+          { 
+            text: "OK", 
+            onPress: () => {
+              setEditProfileModal(false);
+            }
+          }
+        ]
+      );
+    } catch (error: any) {
+      Alert.alert("Update Failed", error.message);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  // Password Change Functions
   const validatePasswordForm = () => {
     const errors: Record<string, string> = {};
 
@@ -117,6 +204,74 @@ export default function ProfileScreen() {
     }
   };
 
+  // Notification Functions
+  const handleNotificationToggle = async (key: keyof typeof notificationSettings) => {
+    const newSettings = {
+      ...notificationSettings,
+      [key]: !notificationSettings[key]
+    };
+    
+    setNotificationSettings(newSettings);
+    
+    // Here you would save to your backend/Firestore
+    try {
+      // Example: Save to Firestore
+      // await db.collection('users').doc(user.uid).update({
+      //   notificationSettings: newSettings
+      // });
+      console.log('Notification settings updated:', newSettings);
+    } catch (error) {
+      // Revert on error
+      setNotificationSettings(notificationSettings);
+      Alert.alert("Error", "Failed to update notification settings");
+    }
+  };
+
+  // Help & Support Functions
+  const handleContactSupport = () => {
+    const email = 'support@agrisense.com';
+    const subject = 'AgriSense Support Request';
+    const body = `Hello AgriSense Support,\n\nI need assistance with:\n\n[Please describe your issue here]\n\nUser ID: ${user?.uid}\nApp Version: 1.0.0\nPlatform: ${Platform.OS}`;
+    
+    Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`)
+      .catch(() => {
+        Alert.alert("Error", "Could not open email app. Please email support@agrisense.com");
+      });
+  };
+
+  const handleViewFAQ = () => {
+    // You can replace this with your actual FAQ URL
+    Linking.openURL('https://agrisense.faq.com')
+      .catch(() => {
+        Alert.alert("Error", "Could not open FAQ page");
+      });
+  };
+
+  const handleSubmitFeedback = () => {
+    const email = 'feedback@agrisense.com';
+    const subject = 'AgriSense App Feedback';
+    const body = `AgriSense Feedback:\n\n[Please share your feedback here]\n\nUser ID: ${user?.uid}\nApp Version: 1.0.0`;
+    
+    Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`)
+      .catch(() => {
+        Alert.alert("Error", "Could not open email app. Please email feedback@agrisense.com");
+      });
+  };
+
+  const handleRateApp = () => {
+    if (Platform.OS === 'ios') {
+      Linking.openURL('https://apps.apple.com/app/idYOUR_APP_ID')
+        .catch(() => {
+          Alert.alert("Error", "Could not open App Store");
+        });
+    } else {
+      Linking.openURL('https://play.google.com/store/apps/details?id=com.agrisense.app')
+        .catch(() => {
+          Alert.alert("Error", "Could not open Play Store");
+        });
+    }
+  };
+
   return (
     <>
       <ThemedView style={styles.container}>
@@ -159,7 +314,7 @@ export default function ProfileScreen() {
           <View style={styles.menu}>
             <Pressable 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
-              onPress={() => Alert.alert("Coming Soon", "Profile settings will be available soon.")}
+              onPress={() => setEditProfileModal(true)}
             >
               <View style={styles.menuLeft}>
                 <Feather name="user" size={20} color={theme.text} />
@@ -181,7 +336,7 @@ export default function ProfileScreen() {
 
             <Pressable 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
-              onPress={() => Alert.alert("Coming Soon", "Notification settings will be available soon.")}
+              onPress={() => setNotificationsModal(true)}
             >
               <View style={styles.menuLeft}>
                 <Feather name="bell" size={20} color={theme.text} />
@@ -192,7 +347,7 @@ export default function ProfileScreen() {
 
             <Pressable 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
-              onPress={() => Alert.alert("Coming Soon", "Help & support will be available soon.")}
+              onPress={() => setHelpSupportModal(true)}
             >
               <View style={styles.menuLeft}>
                 <Feather name="help-circle" size={20} color={theme.text} />
@@ -217,6 +372,71 @@ export default function ProfileScreen() {
           </ThemedText>
         </ScrollView>
       </ThemedView>
+
+      {/* Edit Profile Modal */}
+      <Modal
+        visible={editProfileModal}
+        animationType="slide"
+        transparent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Edit Profile</ThemedText>
+              <Pressable onPress={() => setEditProfileModal(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
+              <AuthInput
+                label="Display Name"
+                placeholder="Enter your name"
+                value={profileForm.displayName}
+                onChangeText={(text) => setProfileForm({...profileForm, displayName: text})}
+                error={profileErrors.displayName}
+                autoCapitalize="words"
+                leftIcon={<Feather name="user" size={20} color={theme.textSecondary} />}
+              />
+
+              <AuthInput
+                label="Email"
+                placeholder="Your email address"
+                value={user?.email || ''}
+                editable={false}
+                leftIcon={<Feather name="mail" size={20} color={theme.textSecondary} />}
+              />
+
+              <AuthInput
+                label="Phone Number (Optional)"
+                placeholder="+1 (555) 123-4567"
+                value={profileForm.phoneNumber}
+                onChangeText={(text) => setProfileForm({...profileForm, phoneNumber: text})}
+                error={profileErrors.phoneNumber}
+                keyboardType="phone-pad"
+                leftIcon={<Feather name="phone" size={20} color={theme.textSecondary} />}
+              />
+
+              <View style={styles.modalButtons}>
+                <AuthButton
+                  title="Cancel"
+                  onPress={() => setEditProfileModal(false)}
+                  variant="outline"
+                  style={{ flex: 1 }}
+                />
+                <AuthButton
+                  title="Save Changes"
+                  onPress={handleUpdateProfile}
+                  loading={profileLoading}
+                  variant="primary"
+                  style={{ flex: 1 }}
+                  disabled={!profileForm.displayName.trim() || profileForm.displayName === user?.displayName}
+                />
+              </View>
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
 
       {/* Change Password Modal */}
       <Modal
@@ -284,6 +504,240 @@ export default function ProfileScreen() {
                 />
               </View>
             </View>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Notifications Modal */}
+      <Modal
+        visible={notificationsModal}
+        animationType="slide"
+        transparent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Notification Settings</ThemedText>
+              <Pressable onPress={() => setNotificationsModal(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.notificationsList} showsVerticalScrollIndicator={false}>
+              <ThemedText style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+                Push Notifications
+              </ThemedText>
+              
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <Feather name="bell" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Push Notifications</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Receive push notifications on this device
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.pushNotifications}
+                  onValueChange={() => handleNotificationToggle('pushNotifications')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                  thumbColor={notificationSettings.pushNotifications ? '#FFFFFF' : '#FFFFFF'}
+                />
+              </View>
+
+              <ThemedText style={[styles.sectionTitle, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
+                Email Notifications
+              </ThemedText>
+              
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <Feather name="mail" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Email Notifications</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Receive email notifications
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.emailNotifications}
+                  onValueChange={() => handleNotificationToggle('emailNotifications')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <Feather name="alert-triangle" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Security Alerts</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Important security and account updates
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.securityAlerts}
+                  onValueChange={() => handleNotificationToggle('securityAlerts')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
+              <ThemedText style={[styles.sectionTitle, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
+                Agricultural Updates
+              </ThemedText>
+              
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <MaterialIcons name="agriculture" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Crop Updates</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Updates about your crops and farming activities
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.cropUpdates}
+                  onValueChange={() => handleNotificationToggle('cropUpdates')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <Feather name="trending-up" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Market Prices</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Daily market price updates
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.marketPrices}
+                  onValueChange={() => handleNotificationToggle('marketPrices')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
+              <View style={styles.notificationItem}>
+                <View style={styles.notificationLeft}>
+                  <Feather name="cloud" size={20} color={theme.text} />
+                  <View>
+                    <ThemedText style={styles.notificationTitle}>Weather Alerts</ThemedText>
+                    <ThemedText style={[styles.notificationDesc, { color: theme.textSecondary }]}>
+                      Weather updates and alerts for your farm
+                    </ThemedText>
+                  </View>
+                </View>
+                <Switch
+                  value={notificationSettings.weatherAlerts}
+                  onValueChange={() => handleNotificationToggle('weatherAlerts')}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Help & Support Modal */}
+      <Modal
+        visible={helpSupportModal}
+        animationType="slide"
+        transparent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Help & Support</ThemedText>
+              <Pressable onPress={() => setHelpSupportModal(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.helpSupportList} showsVerticalScrollIndicator={false}>
+              <Pressable 
+                style={[styles.helpItem, { borderBottomColor: theme.border }]}
+                onPress={handleContactSupport}
+              >
+                <View style={styles.helpLeft}>
+                  <Feather name="mail" size={24} color={theme.primary} />
+                  <View>
+                    <ThemedText style={styles.helpTitle}>Contact Support</ThemedText>
+                    <ThemedText style={[styles.helpDesc, { color: theme.textSecondary }]}>
+                      Get help from our support team
+                    </ThemedText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </Pressable>
+
+              <Pressable 
+                style={[styles.helpItem, { borderBottomColor: theme.border }]}
+                onPress={handleViewFAQ}
+              >
+                <View style={styles.helpLeft}>
+                  <Feather name="help-circle" size={24} color={theme.primary} />
+                  <View>
+                    <ThemedText style={styles.helpTitle}>FAQ & Documentation</ThemedText>
+                    <ThemedText style={[styles.helpDesc, { color: theme.textSecondary }]}>
+                      Find answers to common questions
+                    </ThemedText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </Pressable>
+
+              <Pressable 
+                style={[styles.helpItem, { borderBottomColor: theme.border }]}
+                onPress={handleSubmitFeedback}
+              >
+                <View style={styles.helpLeft}>
+                  <Feather name="message-square" size={24} color={theme.primary} />
+                  <View>
+                    <ThemedText style={styles.helpTitle}>Submit Feedback</ThemedText>
+                    <ThemedText style={[styles.helpDesc, { color: theme.textSecondary }]}>
+                      Share your suggestions with us
+                    </ThemedText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </Pressable>
+
+              <Pressable 
+                style={[styles.helpItem, { borderBottomColor: theme.border }]}
+                onPress={handleRateApp}
+              >
+                <View style={styles.helpLeft}>
+                  <Feather name="star" size={24} color={theme.primary} />
+                  <View>
+                    <ThemedText style={styles.helpTitle}>Rate Our App</ThemedText>
+                    <ThemedText style={[styles.helpDesc, { color: theme.textSecondary }]}>
+                      Rate AgriSense on the app store
+                    </ThemedText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </Pressable>
+
+              <View style={styles.contactInfo}>
+                <ThemedText type="h4" style={{ marginBottom: Spacing.sm }}>
+                  Contact Information
+                </ThemedText>
+                <ThemedText style={[styles.contactText, { color: theme.textSecondary }]}>
+                  <ThemedText style={{ fontWeight: '600' }}>Email:</ThemedText> support@agrisense.com
+                </ThemedText>
+                <ThemedText style={[styles.contactText, { color: theme.textSecondary }]}>
+                  <ThemedText style={{ fontWeight: '600' }}>Hours:</ThemedText> Mon-Fri, 9AM-6PM
+                </ThemedText>
+                <ThemedText style={[styles.contactText, { color: theme.textSecondary }]}>
+                  <ThemedText style={{ fontWeight: '600' }}>Response Time:</ThemedText> Within 24 hours
+                </ThemedText>
+              </View>
+            </ScrollView>
           </ThemedView>
         </View>
       </Modal>
@@ -394,5 +848,69 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.md,
     marginTop: Spacing.lg,
+  },
+  // Notifications styles
+  notificationsList: {
+    maxHeight: 400,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: Spacing.sm,
+    letterSpacing: 0.5,
+  },
+  notificationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+  },
+  notificationLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    flex: 1,
+  },
+  notificationTitle: {
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  notificationDesc: {
+    fontSize: 12,
+  },
+  // Help & Support styles
+  helpSupportList: {
+    maxHeight: 400,
+  },
+  helpItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.lg,
+    borderBottomWidth: 1,
+  },
+  helpLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    flex: 1,
+  },
+  helpTitle: {
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  helpDesc: {
+    fontSize: 12,
+  },
+  contactInfo: {
+    marginTop: Spacing.xl,
+    padding: Spacing.md,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: BorderRadius.md,
+  },
+  contactText: {
+    fontSize: 14,
+    marginBottom: Spacing.xs,
   },
 });
