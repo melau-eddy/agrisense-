@@ -5,11 +5,13 @@ import {
   signInWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
+  sendEmailVerification,
   updateProfile,
   onAuthStateChanged,
   updatePassword,
   reauthenticateWithCredential,
-  EmailAuthProvider
+  EmailAuthProvider,
+  updateEmail
 } from 'firebase/auth';
 import { auth, clearAuthPersistence } from '@/config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,9 +24,13 @@ interface AuthContextType {
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  sendVerificationEmail: () => Promise<{ success: boolean; error?: string }>;
   updateUserProfile: (data: { displayName?: string; photoURL?: string }) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   reauthenticate: (password: string) => Promise<boolean>;
+  deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
+  refreshUserData: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -48,7 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Check if saved state is less than 1 hour old
             const oneHourAgo = Date.now() - (60 * 60 * 1000);
             if (parsedState.timestamp > oneHourAgo) {
-              setUser(parsedState.user);
+              // Only set minimal user data for faster load
+              setUser({
+                ...parsedState.user,
+                // Ensure we have all required User properties
+                emailVerified: parsedState.user.emailVerified || false,
+                metadata: parsedState.user.metadata || { creationTime: '', lastSignInTime: '' }
+              } as User);
             }
           }
         }
@@ -67,7 +79,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!initialized) return;
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
+      if (firebaseUser) {
+        // Force refresh to get latest data
+        await firebaseUser.reload();
+        const refreshedUser = auth.currentUser;
+        setUser(refreshedUser);
+      } else {
+        setUser(null);
+      }
+      
       setLoading(false);
 
       // Save auth state
@@ -78,6 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: firebaseUser.email,
             displayName: firebaseUser.displayName,
             photoURL: firebaseUser.photoURL,
+            emailVerified: firebaseUser.emailVerified,
+            phoneNumber: firebaseUser.phoneNumber,
+            metadata: firebaseUser.metadata
           };
           
           await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
@@ -94,6 +117,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return unsubscribe;
   }, [initialized]);
+
+  // Function to manually refresh user data
+  const refreshUserData = async () => {
+    if (user) {
+      try {
+        await user.reload();
+        const refreshedUser = auth.currentUser;
+        setUser(refreshedUser);
+      } catch (error) {
+        console.error('Failed to refresh user data:', error);
+      }
+    }
+  };
 
   const login = async (email: string, password: string) => {
     try {
@@ -143,6 +179,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await updateProfile(userCredential.user, {
         displayName: name,
       });
+
+      // Send verification email
+      await sendEmailVerification(userCredential.user);
       
       return { success: true };
     } catch (error: any) {
@@ -217,6 +256,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const sendVerificationEmail = async () => {
+    try {
+      if (!auth.currentUser) {
+        return { success: false, error: 'No user logged in' };
+      }
+
+      // Check if email is already verified
+      if (auth.currentUser.emailVerified) {
+        return { success: false, error: 'Email is already verified' };
+      }
+
+      await sendEmailVerification(auth.currentUser);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Send verification email error:', error);
+      
+      let errorMessage = 'Failed to send verification email.';
+      
+      switch (error.code) {
+        case 'auth/too-many-requests':
+          errorMessage = 'Too many requests. Please try again later.';
+          break;
+        case 'auth/network-request-failed':
+          errorMessage = 'Network error. Please check your connection.';
+          break;
+        default:
+          errorMessage = error.message || 'Failed to send verification email.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  };
+
   const updateUserProfile = async (data: { displayName?: string; photoURL?: string }) => {
     try {
       if (!auth.currentUser) {
@@ -224,10 +296,92 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       
       await updateProfile(auth.currentUser, data);
+      
+      // Update local state
+      setUser({
+        ...auth.currentUser,
+        ...data
+      } as User);
+
+      // Update AsyncStorage
+      try {
+        const userData = {
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email,
+          displayName: data.displayName || auth.currentUser.displayName,
+          photoURL: data.photoURL || auth.currentUser.photoURL,
+          emailVerified: auth.currentUser.emailVerified,
+          phoneNumber: auth.currentUser.phoneNumber,
+          metadata: auth.currentUser.metadata
+        };
+        
+        await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+          user: userData,
+          timestamp: Date.now(),
+        }));
+      } catch (storageError) {
+        console.error('Failed to update auth state:', storageError);
+      }
+      
       return { success: true };
     } catch (error: any) {
       console.error('Update profile error:', error);
-      return { success: false, error: 'Failed to update profile.' };
+      
+      let errorMessage = 'Failed to update profile.';
+      
+      switch (error.code) {
+        case 'auth/requires-recent-login':
+          errorMessage = 'Please re-authenticate to update your profile.';
+          break;
+        default:
+          errorMessage = error.message || 'Failed to update profile.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  };
+
+  const updateUserEmail = async (newEmail: string, password: string) => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser || !currentUser.email) {
+        return { success: false, error: 'No user logged in' };
+      }
+
+      // Re-authenticate first
+      const credential = EmailAuthProvider.credential(currentUser.email, password);
+      await reauthenticateWithCredential(currentUser, credential);
+
+      // Update email
+      await updateEmail(currentUser, newEmail);
+
+      // Send verification to new email
+      await sendEmailVerification(currentUser);
+      
+      return { success: true };
+    } catch (error: any) {
+      console.error('Update email error:', error);
+      
+      let errorMessage = 'Failed to update email.';
+      
+      switch (error.code) {
+        case 'auth/email-already-in-use':
+          errorMessage = 'This email is already in use.';
+          break;
+        case 'auth/invalid-email':
+          errorMessage = 'Invalid email address.';
+          break;
+        case 'auth/requires-recent-login':
+          errorMessage = 'Please re-login to update your email.';
+          break;
+        case 'auth/wrong-password':
+          errorMessage = 'Incorrect password.';
+          break;
+        default:
+          errorMessage = error.message || 'Failed to update email.';
+      }
+      
+      return { success: false, error: errorMessage };
     }
   };
 
@@ -256,7 +410,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = 'Current password is incorrect.';
           break;
         case 'auth/weak-password':
-          errorMessage = 'New password is too weak.';
+          errorMessage = 'New password is too weak. Use at least 6 characters.';
           break;
         case 'auth/requires-recent-login':
           errorMessage = 'Please log in again to change your password.';
@@ -283,6 +437,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const deleteAccount = async (password: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const user = auth.currentUser;
+      if (!user || !user.email) {
+        return { success: false, error: 'No user logged in' };
+      }
+
+      // Re-authenticate first
+      const credential = EmailAuthProvider.credential(user.email, password);
+      await reauthenticateWithCredential(user, credential);
+      
+      // Delete user
+      await user.delete();
+      
+      // Clear local storage
+      await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+      
+      return { success: true };
+    } catch (error: any) {
+      console.error('Delete account error:', error);
+      
+      let errorMessage = 'Failed to delete account.';
+      
+      switch (error.code) {
+        case 'auth/wrong-password':
+          errorMessage = 'Incorrect password.';
+          break;
+        case 'auth/requires-recent-login':
+          errorMessage = 'Please re-login to delete your account.';
+          break;
+        default:
+          errorMessage = error.message || 'Failed to delete account.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  };
+
   const value: AuthContextType = {
     user,
     loading,
@@ -290,9 +482,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signup,
     logout,
     resetPassword,
+    sendVerificationEmail,
     updateUserProfile,
+    updateUserEmail,
     changePassword,
     reauthenticate,
+    deleteAccount,
+    refreshUserData,
   };
 
   return (
