@@ -15,16 +15,24 @@ const groq = new Groq({
   dangerouslyAllowBrowser: true
 });
 
-// Updated models list (Llama 3.1 70B and other current models)
+// Updated models list - December 2024 (Active Production Models)
 export const availableModels = [
-  { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B Versatile', provider: 'Groq' },
-  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', provider: 'Groq' },
-  { id: 'llama-3.2-1b-preview', name: 'Llama 3.2 1B Preview', provider: 'Groq' },
-  { id: 'llama-3.2-3b-preview', name: 'Llama 3.2 3B Preview', provider: 'Groq' },
-  { id: 'llama-3.2-90b-text-preview', name: 'Llama 3.2 90B Text', provider: 'Groq' },
-  { id: 'llama-guard-3-8b', name: 'Llama Guard 3 8B', provider: 'Groq' },
-  { id: 'gemma2-9b-it', name: 'Gemma 2 9B', provider: 'Groq' },
-  { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', provider: 'Groq' },
+  // Production Models - Recommended for production use
+  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', provider: 'Meta', category: 'production' },
+  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', provider: 'Meta', category: 'production' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'OpenAI', category: 'production' },
+  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', provider: 'OpenAI', category: 'production' },
+  { id: 'meta-llama/llama-guard-4-12b', name: 'Llama Guard 4 12B', provider: 'Meta', category: 'production' },
+  
+  // Preview Models - For evaluation only
+  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', name: 'Llama 4 Scout 17B', provider: 'Meta', category: 'preview' },
+  { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', name: 'Llama 4 Maverick 17B', provider: 'Meta', category: 'preview' },
+  { id: 'moonshotai/kimi-k2-instruct-0905', name: 'Kimi K2 Instruct', provider: 'Moonshot AI', category: 'preview' },
+  { id: 'qwen/qwen3-32b', name: 'Qwen3 32B', provider: 'Alibaba Cloud', category: 'preview' },
+  
+  // Audio Models
+  { id: 'whisper-large-v3', name: 'Whisper Large V3', provider: 'OpenAI', category: 'audio' },
+  { id: 'whisper-large-v3-turbo', name: 'Whisper Large V3 Turbo', provider: 'OpenAI', category: 'audio' },
 ];
 
 export interface ChatMessage {
@@ -50,7 +58,7 @@ export async function getChatCompletion(
   
   try {
     const {
-      model = 'llama-3.1-70b-versatile', // Updated default model
+      model = 'llama-3.3-70b-versatile', // Updated to current production model
       temperature = 0.7,
       max_tokens = 1024,
       stream = false,
@@ -143,8 +151,8 @@ export async function getChatCompletion(
       throw new Error('Request timeout. Please try again.');
     } else if (error?.type === 'invalid_request_error') {
       throw new Error(`Invalid request: ${error.message || 'Please try rephrasing your question.'}`);
-    } else if (error?.code === 'model_decommissioned') {
-      throw new Error('The selected AI model has been updated. Please try again or change model in settings.');
+    } else if (error?.code === 'model_not_found' || error?.message?.includes('decommissioned')) {
+      throw new Error('The selected AI model is no longer available. Please select a different model from the settings.');
     } else {
       throw new Error(`AI service error: ${error?.message || 'Please try again'}`);
     }
@@ -165,10 +173,10 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
       dangerouslyAllowBrowser: true 
     });
     
-    // Test with current model
+    // Test with current small production model
     const response = await testClient.chat.completions.create({
       messages: [{ role: 'user', content: 'Hello' }],
-      model: 'llama-3.1-8b-instant', // Use a small model for validation
+      model: 'llama-3.1-8b-instant', // Current production model
       max_tokens: 1,
     });
     
@@ -188,16 +196,16 @@ export async function getAvailableModels(): Promise<typeof availableModels> {
     return availableModels;
   } catch (error) {
     console.error('Error fetching models:', error);
-    // Return basic models as fallback
+    // Return basic production models as fallback
     return [
-      { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B Versatile', provider: 'Groq' },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', provider: 'Groq' },
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', provider: 'Meta', category: 'production' },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', provider: 'Meta', category: 'production' },
     ];
   }
 }
 
 /**
- * Test API connectivity with current model
+ * Test API connectivity with current production model
  */
 export async function testApiConnection(): Promise<{
   success: boolean;
@@ -210,7 +218,7 @@ export async function testApiConnection(): Promise<{
     
     await groq.chat.completions.create({
       messages: [{ role: 'user', content: 'Test connection' }],
-      model: 'llama-3.1-8b-instant', // Use small model for connection test
+      model: 'llama-3.1-8b-instant', // Current production model
       max_tokens: 1,
     });
     
@@ -220,13 +228,13 @@ export async function testApiConnection(): Promise<{
       success: true,
       message: `✅ API connected successfully (${responseTime}ms)`,
       responseTime,
-      model: 'llama-3.1-70b-versatile'
+      model: 'llama-3.3-70b-versatile'
     };
   } catch (error: any) {
     return {
       success: false,
       message: `❌ API connection failed: ${error.code || error.status} ${JSON.stringify(error.error || error.message)}`,
-      model: 'llama-3.1-70b-versatile'
+      model: 'llama-3.3-70b-versatile'
     };
   }
 }

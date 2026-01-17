@@ -1,16 +1,18 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { 
   View, 
   StyleSheet, 
   ScrollView, 
   Pressable, 
-  Alert 
+  Alert,
+  ActivityIndicator
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useIsFocused } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
+import { getAuth } from "firebase/auth";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -18,8 +20,10 @@ import { KPICard } from "@/components/KPICard";
 import { HeaderTitle } from "@/components/HeaderTitle";
 import { useTheme } from "@/hooks/useTheme";
 import { useChat } from "@/contexts/ChatContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import { mockKPIs, mockFields, mockWeatherForecast } from "@/lib/mockData";
+import { subscribeToAlerts, Alert as AlertType } from "@/services/notifications/firebaseNotifications";
 import type { RootStackParamList } from "@/navigation/RootStackNavigator";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -28,8 +32,58 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<NavigationProp>();
+  const isFocused = useIsFocused();
   const { theme, isDark } = useTheme();
   const { openChat } = useChat();
+  const { user } = useAuth();
+  
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [totalAlerts, setTotalAlerts] = useState(0);
+  const [isLoadingAlerts, setIsLoadingAlerts] = useState(true);
+  const [alerts, setAlerts] = useState<AlertType[]>([]);
+  const [unsubscribe, setUnsubscribe] = useState<() => void>(() => () => {});
+
+  // Subscribe to real-time alerts
+  useEffect(() => {
+    if (!user?.uid || !isFocused) return;
+
+    setIsLoadingAlerts(true);
+
+    const unsubscribeAlerts = subscribeToAlerts(
+      user.uid,
+      (newAlerts) => {
+        setAlerts(newAlerts);
+        const unread = newAlerts.filter(alert => !alert.read).length;
+        setUnreadCount(unread);
+        setTotalAlerts(newAlerts.length);
+        setIsLoadingAlerts(false);
+      },
+      (error) => {
+        console.error('Error in alerts subscription:', error);
+        setIsLoadingAlerts(false);
+      }
+    );
+
+    setUnsubscribe(() => unsubscribeAlerts);
+
+    return () => {
+      unsubscribeAlerts();
+    };
+  }, [user?.uid, isFocused]);
+
+  // Refresh alerts when screen comes into focus
+  useEffect(() => {
+    if (isFocused) {
+      // Force a refresh by re-subscribing
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      
+      if (currentUser) {
+        setIsLoadingAlerts(true);
+        // Subscription will automatically update
+      }
+    }
+  }, [isFocused]);
 
   const getWeatherIcon = (condition: string): keyof typeof Feather.glyphMap => {
     switch (condition) {
@@ -39,12 +93,14 @@ export default function DashboardScreen() {
         return "cloud";
       case "rain":
         return "cloud-rain";
+      case "storm":
+        return "cloud-lightning";
+      case "wind":
+        return "wind";
       default:
         return "sun";
     }
   };
-
-  const activeAlerts = 2;
 
   const handleAIChatPress = () => {
     openChat();
@@ -54,7 +110,7 @@ export default function DashboardScreen() {
   const handleQuickAction = (action: string) => {
     switch (action) {
       case "irrigation":
-        navigation.navigate("Control"); // Updated to navigate to Control tab
+        navigation.navigate("Control");
         break;
       case "soil":
         Alert.alert("Soil Analysis", "Opening soil analysis...");
@@ -68,8 +124,27 @@ export default function DashboardScreen() {
       case "settings":
         navigation.navigate("Settings");
         break;
+      case "notifications":
+        navigation.navigate("Notifications");
+        break;
     }
   };
+
+  const getCriticalAlertsCount = () => {
+    return alerts.filter(alert => 
+      (alert.type === 'critical' || alert.type === 'warning') && !alert.read
+    ).length;
+  };
+
+  const getRecentAlert = () => {
+    const unreadAlerts = alerts.filter(alert => !alert.read);
+    if (unreadAlerts.length > 0) {
+      return unreadAlerts[0];
+    }
+    return alerts.length > 0 ? alerts[0] : null;
+  };
+
+  const recentAlert = getRecentAlert();
 
   return (
     <ThemedView style={styles.container}>
@@ -92,17 +167,25 @@ export default function DashboardScreen() {
               onPress={() => navigation.navigate("Notifications")}
               style={[styles.notificationButton, { backgroundColor: theme.backgroundSecondary }]}
             >
-              <Feather name="bell" size={20} color={theme.text} />
-              {activeAlerts > 0 ? (
-                <View
-                  style={[
-                    styles.badge,
-                    { backgroundColor: isDark ? Colors.dark.critical : Colors.light.critical },
-                  ]}
-                >
-                  <ThemedText style={styles.badgeText}>{activeAlerts}</ThemedText>
-                </View>
-              ) : null}
+              {isLoadingAlerts ? (
+                <ActivityIndicator size="small" color={theme.text} />
+              ) : (
+                <>
+                  <Feather name="bell" size={20} color={theme.text} />
+                  {unreadCount > 0 ? (
+                    <View
+                      style={[
+                        styles.badge,
+                        { backgroundColor: isDark ? Colors.dark.critical : Colors.light.critical },
+                      ]}
+                    >
+                      <ThemedText style={styles.badgeText}>
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </>
+              )}
             </Pressable>
           </View>
         </View>
@@ -110,12 +193,71 @@ export default function DashboardScreen() {
         {/* Welcome Message */}
         <View style={styles.welcomeSection}>
           <ThemedText type="h2" style={styles.welcomeTitle}>
-            Good morning, Farmer! 🌱
+            Welcome back, {user?.displayName?.split(' ')[0] || 'Farmer'}! 🌱
           </ThemedText>
           <ThemedText style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
-            Your fields are looking healthy today
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </ThemedText>
         </View>
+
+        {/* Alert Summary Banner */}
+        {recentAlert && (
+          <Pressable
+            style={[
+              styles.alertBanner,
+              { 
+                backgroundColor: recentAlert.type === 'critical' 
+                  ? (isDark ? Colors.dark.critical : Colors.light.critical) + '15'
+                  : recentAlert.type === 'warning'
+                    ? (isDark ? Colors.dark.warning : Colors.light.warning) + '15'
+                    : theme.backgroundSecondary,
+                borderColor: recentAlert.type === 'critical' 
+                  ? isDark ? Colors.dark.critical : Colors.light.critical
+                  : recentAlert.type === 'warning'
+                    ? isDark ? Colors.dark.warning : Colors.light.warning
+                    : theme.border,
+              }
+            ]}
+            onPress={() => navigation.navigate("Notifications")}
+          >
+            <View style={styles.alertBannerContent}>
+              <View style={styles.alertBannerLeft}>
+                <Feather 
+                  name={recentAlert.type === 'critical' ? "alert-triangle" : "bell"} 
+                  size={20} 
+                  color={recentAlert.type === 'critical' 
+                    ? isDark ? Colors.dark.critical : Colors.light.critical
+                    : recentAlert.type === 'warning'
+                      ? isDark ? Colors.dark.warning : Colors.light.warning
+                      : theme.text
+                  } 
+                />
+                <View style={styles.alertBannerText}>
+                  <ThemedText style={[
+                    styles.alertBannerTitle,
+                    { 
+                      color: recentAlert.type === 'critical' 
+                        ? isDark ? Colors.dark.critical : Colors.light.critical
+                        : recentAlert.type === 'warning'
+                          ? isDark ? Colors.dark.warning : Colors.light.warning
+                          : theme.text
+                    }
+                  ]}>
+                    {recentAlert.type === 'critical' ? '🚨 Critical Alert' : 
+                     recentAlert.type === 'warning' ? '⚠️ Warning' : 'ℹ️ Notification'}
+                  </ThemedText>
+                  <ThemedText 
+                    style={[styles.alertBannerMessage, { color: theme.text }]}
+                    numberOfLines={1}
+                  >
+                    {recentAlert.title}
+                  </ThemedText>
+                </View>
+              </View>
+              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+            </View>
+          </Pressable>
+        )}
 
         {/* AI Assistant Quick Access */}
         <Pressable
@@ -137,7 +279,7 @@ export default function DashboardScreen() {
                 AgriSense AI Assistant
               </ThemedText>
               <ThemedText style={styles.aiAssistantDescription}>
-                Ask questions about crops, weather, soil health, and more
+                Get instant advice on crops, irrigation, and farm management
               </ThemedText>
             </View>
             <Feather name="chevron-right" size={20} color="#FFFFFF" />
@@ -148,11 +290,11 @@ export default function DashboardScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
-              Overview
+              Farm Overview
             </ThemedText>
-            <Pressable onPress={() => Alert.alert("Coming Soon", "Detailed view will be available soon")}>
+            <Pressable onPress={() => Alert.alert("Coming Soon", "Detailed analytics will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
-                View All
+                View Analytics
               </ThemedText>
             </Pressable>
           </View>
@@ -189,10 +331,13 @@ export default function DashboardScreen() {
               onPress={() => handleQuickAction("soil")}
             />
             <KPICard
-              title="Active Fields"
-              value={mockKPIs.activeFields}
-              icon="grid"
-              color={isDark ? Colors.dark.warning : Colors.light.warning}
+              title="Active Alerts"
+              value={getCriticalAlertsCount()}
+              icon="alert-triangle"
+              color={isDark ? Colors.dark.critical : Colors.light.critical}
+              trend={getCriticalAlertsCount() > 0 ? "up" : "neutral"}
+              trendValue={getCriticalAlertsCount() > 0 ? "Needs attention" : "All clear"}
+              onPress={() => handleQuickAction("notifications")}
             />
           </View>
         </View>
@@ -215,12 +360,12 @@ export default function DashboardScreen() {
 
             <Pressable
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("soil")}
+              onPress={() => handleQuickAction("ai")}
             >
               <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.primary : Colors.light.primary}15` }]}>
-                <Feather name="thermometer" size={24} color={isDark ? Colors.dark.primary : Colors.light.primary} />
+                <Feather name="cpu" size={24} color={isDark ? Colors.dark.primary : Colors.light.primary} />
               </View>
-              <ThemedText style={styles.quickActionText}>Soil Analysis</ThemedText>
+              <ThemedText style={styles.quickActionText}>AI Assistant</ThemedText>
             </Pressable>
 
             <Pressable
@@ -235,12 +380,14 @@ export default function DashboardScreen() {
 
             <Pressable
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("settings")}
+              onPress={() => handleQuickAction("notifications")}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.success : Colors.light.success}15` }]}>
-                <Feather name="settings" size={24} color={isDark ? Colors.dark.success : Colors.light.success} />
+              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.critical : Colors.light.critical}15` }]}>
+                <Feather name="bell" size={24} color={isDark ? Colors.dark.critical : Colors.light.critical} />
               </View>
-              <ThemedText style={styles.quickActionText}>AI Settings</ThemedText>
+              <ThemedText style={styles.quickActionText}>
+                {unreadCount > 0 ? `Alerts (${unreadCount})` : 'Notifications'}
+              </ThemedText>
             </Pressable>
           </View>
         </View>
@@ -248,7 +395,7 @@ export default function DashboardScreen() {
         {/* Impact Metrics */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
-            Impact Metrics
+            Environmental Impact
           </ThemedText>
           <View
             style={[
@@ -310,7 +457,7 @@ export default function DashboardScreen() {
             </ThemedText>
             <Pressable onPress={() => handleQuickAction("weather")}>
               <ThemedText type="link" style={{ color: theme.link }}>
-                Details
+                Detailed Forecast
               </ThemedText>
             </Pressable>
           </View>
@@ -383,11 +530,11 @@ export default function DashboardScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
-              Field Summary
+              Field Status
             </ThemedText>
             <Pressable onPress={() => Alert.alert("Coming Soon", "All fields view will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
-                View All
+                View All Fields
               </ThemedText>
             </Pressable>
           </View>
@@ -449,46 +596,91 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Recent Alerts */}
+        {/* Recent Activity */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
-            Recent Alerts
+            Recent Activity
           </ThemedText>
           <View
             style={[
-              styles.alertsCard,
+              styles.activityCard,
               { backgroundColor: theme.cardBackground, borderColor: theme.border },
             ]}
           >
-            <View style={styles.alertItem}>
-              <View style={[styles.alertIcon, { backgroundColor: `${Colors.light.warning}15` }]}>
-                <Feather name="alert-triangle" size={16} color={Colors.light.warning} />
-              </View>
-              <View style={styles.alertContent}>
-                <ThemedText style={styles.alertTitle}>Low moisture detected</ThemedText>
-                <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
-                  Field B - North Section • 42% moisture
+            {alerts.slice(0, 2).map((alert, index) => (
+              <Pressable
+                key={alert.id}
+                onPress={() => navigation.navigate("Notifications")}
+                style={[
+                  styles.activityRow,
+                  index < 1 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
+                ]}
+              >
+                <View style={styles.activityLeft}>
+                  <View style={[
+                    styles.activityIcon,
+                    { 
+                      backgroundColor: alert.type === 'critical' 
+                        ? `${Colors.light.critical}15`
+                        : alert.type === 'warning'
+                          ? `${Colors.light.warning}15`
+                          : alert.type === 'success'
+                            ? `${Colors.light.success}15`
+                            : `${theme.primary}15`
+                    }
+                  ]}>
+                    <Feather 
+                      name={
+                        alert.type === 'critical' ? "alert-triangle" :
+                        alert.type === 'warning' ? "alert-circle" :
+                        alert.type === 'success' ? "check-circle" : "info"
+                      } 
+                      size={16} 
+                      color={
+                        alert.type === 'critical' ? Colors.light.critical :
+                        alert.type === 'warning' ? Colors.light.warning :
+                        alert.type === 'success' ? Colors.light.success : theme.primary
+                      } 
+                    />
+                  </View>
+                  <View style={styles.activityContent}>
+                    <ThemedText style={styles.activityTitle}>{alert.title}</ThemedText>
+                    <ThemedText style={[styles.activitySubtitle, { color: theme.textSecondary }]}>
+                      {alert.category.charAt(0).toUpperCase() + alert.category.slice(1)}
+                    </ThemedText>
+                  </View>
+                </View>
+                <View style={styles.activityRight}>
+                  <ThemedText style={[styles.activityTime, { color: theme.textSecondary }]}>
+                    {new Date(alert.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </ThemedText>
+                  {!alert.read && (
+                    <View style={[styles.activityUnread, { backgroundColor: theme.primary }]} />
+                  )}
+                </View>
+              </Pressable>
+            ))}
+            
+            {alerts.length === 0 && (
+              <View style={styles.noActivity}>
+                <Feather name="check-circle" size={24} color={theme.textSecondary} />
+                <ThemedText style={[styles.noActivityText, { color: theme.textSecondary }]}>
+                  No recent activity
                 </ThemedText>
               </View>
-              <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
-                2h ago
-              </ThemedText>
-            </View>
-            <View style={[styles.divider, { backgroundColor: theme.border, marginVertical: Spacing.md }]} />
-            <View style={styles.alertItem}>
-              <View style={[styles.alertIcon, { backgroundColor: `${Colors.light.success}15` }]}>
-                <Feather name="check-circle" size={16} color={Colors.light.success} />
-              </View>
-              <View style={styles.alertContent}>
-                <ThemedText style={styles.alertTitle}>Irrigation complete</ThemedText>
-                <ThemedText style={[styles.alertSubtitle, { color: theme.textSecondary }]}>
-                  Field C - Automated system • 4,500L
+            )}
+            
+            {alerts.length > 0 && (
+              <Pressable
+                onPress={() => navigation.navigate("Notifications")}
+                style={styles.viewAllActivity}
+              >
+                <ThemedText style={[styles.viewAllText, { color: theme.link }]}>
+                  View all activity
                 </ThemedText>
-              </View>
-              <ThemedText style={[styles.alertTime, { color: theme.textSecondary }]}>
-                5h ago
-              </ThemedText>
-            </View>
+                <Feather name="chevron-right" size={16} color={theme.link} />
+              </Pressable>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -528,11 +720,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 8,
     right: 8,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 4,
   },
   badgeText: {
     color: "#FFFFFF",
@@ -547,6 +740,34 @@ const styles = StyleSheet.create({
   },
   welcomeSubtitle: {
     fontSize: 16,
+  },
+  alertBanner: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl,
+    borderWidth: 1,
+  },
+  alertBannerContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  alertBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    flex: 1,
+  },
+  alertBannerText: {
+    flex: 1,
+  },
+  alertBannerTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  alertBannerMessage: {
+    fontSize: 13,
   },
   aiAssistantCard: {
     borderRadius: BorderRadius.lg,
@@ -718,35 +939,72 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  alertsCard: {
+  activityCard: {
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
+    overflow: "hidden",
+  },
+  activityRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: Spacing.lg,
   },
-  alertItem: {
+  activityLeft: {
     flexDirection: "row",
     alignItems: "center",
+    gap: Spacing.md,
+    flex: 1,
   },
-  alertIcon: {
+  activityIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: Spacing.md,
   },
-  alertContent: {
+  activityContent: {
     flex: 1,
   },
-  alertTitle: {
+  activityTitle: {
     fontSize: 14,
     fontWeight: "500",
     marginBottom: 2,
   },
-  alertSubtitle: {
+  activitySubtitle: {
     fontSize: 12,
   },
-  alertTime: {
-    fontSize: 12,
+  activityRight: {
+    alignItems: "flex-end",
+    gap: Spacing.xs,
+  },
+  activityTime: {
+    fontSize: 11,
+  },
+  activityUnread: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  noActivity: {
+    alignItems: "center",
+    padding: Spacing.xl,
+    gap: Spacing.md,
+  },
+  noActivityText: {
+    fontSize: 14,
+  },
+  viewAllActivity: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.xs,
+    padding: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.05)',
+  },
+  viewAllText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

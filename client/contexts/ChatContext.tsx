@@ -52,16 +52,16 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
-// Storage keys
+// Storage keys - updated version to force cache refresh
 const STORAGE_KEYS = {
-  CHAT_HISTORY: '@agrisense_chat_history_v3',
-  CHAT_CONFIG: '@agrisense_chat_config_v3',
-  CHAT_VISIBILITY: '@agrisense_chat_visibility',
+  CHAT_HISTORY: '@agrisense_chat_history_v4',
+  CHAT_CONFIG: '@agrisense_chat_config_v4',
+  CHAT_VISIBILITY: '@agrisense_chat_visibility_v4',
 };
 
-// Default config with updated model
+// Default config with updated model (December 2024)
 const defaultConfig: ChatConfig = {
-  model: 'llama-3.1-70b-versatile', // Updated to Llama 3.1 70B
+  model: 'llama-3.3-70b-versatile', // Updated to Llama 3.3 70B
   temperature: 0.7,
   maxTokens: 1024,
 };
@@ -128,7 +128,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const storedConfig = await AsyncStorage.getItem(STORAGE_KEYS.CHAT_CONFIG);
         if (storedConfig) {
           const parsedConfig = JSON.parse(storedConfig);
-          setConfig(prev => ({ ...prev, ...parsedConfig }));
+          
+          // Migrate deprecated models to current versions
+          const migratedConfig = migrateModelConfig(parsedConfig);
+          setConfig(prev => ({ ...prev, ...migratedConfig }));
+          
+          // Save migrated config if model was changed
+          if (migratedConfig.model !== parsedConfig.model) {
+            console.log(`Migrating model from ${parsedConfig.model} to ${migratedConfig.model}`);
+            await AsyncStorage.setItem(STORAGE_KEYS.CHAT_CONFIG, JSON.stringify(migratedConfig));
+          }
         }
 
         // Load chat visibility preference
@@ -146,6 +155,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     initializeChat();
   }, [isInitialized]);
+
+  // Migrate deprecated model IDs to current versions
+  const migrateModelConfig = (cfg: ChatConfig): ChatConfig => {
+    const deprecatedModelMap: Record<string, string> = {
+      'llama-3.1-70b-versatile': 'llama-3.3-70b-versatile',
+      'llama-3.2-1b-preview': 'llama-3.1-8b-instant',
+      'llama-3.2-3b-preview': 'llama-3.1-8b-instant',
+      'llama-3.2-90b-text-preview': 'llama-3.3-70b-versatile',
+      'llama-guard-3-8b': 'meta-llama/llama-guard-4-12b',
+      'gemma2-9b-it': 'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768': 'llama-3.3-70b-versatile',
+    };
+
+    const currentModel = cfg.model;
+    const newModel = deprecatedModelMap[currentModel] || currentModel;
+
+    if (newModel !== currentModel) {
+      return { ...cfg, model: newModel };
+    }
+
+    return cfg;
+  };
 
   // Save messages to storage
   const saveMessages = useCallback(async (msgs: Message[]) => {
@@ -270,12 +301,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('Chat error:', error);
 
+      // Check if it's a deprecated model error
+      const isModelError = error.message?.includes('model') || 
+                          error.message?.includes('decommissioned') ||
+                          error.message?.includes('not found');
+
+      let errorMessage = error.message || 'Service temporarily unavailable. Please try again.';
+
+      if (isModelError) {
+        // Attempt to migrate to default model
+        const migratedConfig = migrateModelConfig(config);
+        if (migratedConfig.model !== config.model) {
+          setConfig(migratedConfig);
+          await saveConfig(migratedConfig);
+          errorMessage = `Model updated to ${migratedConfig.model}. Please try sending your message again.`;
+        }
+      }
+
       // Update bot message with error
       const errorMessages = newMessages.map(msg => 
         msg.pending && msg.user._id === 'bot'
           ? { 
               ...msg, 
-              text: `❌ ${error.message || 'Service temporarily unavailable. Please try again.'}`,
+              text: `❌ ${errorMessage}`,
               pending: false,
               error: true,
               retryCount: (msg.retryCount || 0) + 1
@@ -290,7 +338,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (!retryMessageId) {
         Alert.alert(
           'Chat Error',
-          error.message || 'Failed to send message. Please try again.',
+          errorMessage,
           [
             { text: 'OK' },
             {
@@ -326,6 +374,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const updateConfig = async (newConfig: Partial<ChatConfig>) => {
     const updatedConfig = { ...config, ...newConfig };
     
+    // Migrate model if it's deprecated
+    const migratedConfig = migrateModelConfig(updatedConfig);
+    
     // Validate API key if it's being updated
     if (newConfig.apiKey !== undefined) {
       if (newConfig.apiKey && newConfig.apiKey.trim() !== '') {
@@ -349,8 +400,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
     }
     
-    setConfig(updatedConfig);
-    await saveConfig(updatedConfig);
+    // Notify user if model was migrated
+    if (migratedConfig.model !== updatedConfig.model) {
+      Alert.alert(
+        'Model Updated',
+        `The selected model has been replaced with ${migratedConfig.model} (latest version).`
+      );
+    }
+    
+    setConfig(migratedConfig);
+    await saveConfig(migratedConfig);
   };
 
   const validateApiKeyHandler = async (key: string): Promise<boolean> => {

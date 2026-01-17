@@ -7,47 +7,102 @@ import {
   sendPasswordResetEmail,
   updateProfile,
   onAuthStateChanged,
-  sendEmailVerification,
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider
 } from 'firebase/auth';
-import { auth } from '@/config/firebase';
+import { auth, clearAuthPersistence } from '@/config/firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
-  updateUserProfile: (data: { displayName?: string; photoURL?: string }) => Promise<void>;
-  sendVerificationEmail: () => Promise<void>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  deleteAccount: (password: string) => Promise<void>;
-  isEmailVerified: boolean;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserProfile: (data: { displayName?: string; photoURL?: string }) => Promise<{ success: boolean; error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  reauthenticate: (password: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Storage keys
+const AUTH_STORAGE_KEY = '@agrisense_auth_state';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
+  // Load saved auth state on startup
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const loadAuthState = async () => {
+      try {
+        const savedAuthState = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
+        if (savedAuthState) {
+          const parsedState = JSON.parse(savedAuthState);
+          if (parsedState.user && parsedState.timestamp) {
+            // Check if saved state is less than 1 hour old
+            const oneHourAgo = Date.now() - (60 * 60 * 1000);
+            if (parsedState.timestamp > oneHourAgo) {
+              setUser(parsedState.user);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load auth state:', error);
+      } finally {
+        setInitialized(true);
+      }
+    };
+
+    loadAuthState();
+  }, []);
+
+  // Listen to auth state changes
+  useEffect(() => {
+    if (!initialized) return;
+
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
       setLoading(false);
+
+      // Save auth state
+      try {
+        if (firebaseUser) {
+          const userData = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            photoURL: firebaseUser.photoURL,
+          };
+          
+          await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+            user: userData,
+            timestamp: Date.now(),
+          }));
+        } else {
+          await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      } catch (error) {
+        console.error('Failed to save auth state:', error);
+      }
     });
 
     return unsubscribe;
-  }, []);
+  }, [initialized]);
 
   const login = async (email: string, password: string) => {
     try {
+      setLoading(true);
       await signInWithEmailAndPassword(auth, email, password);
+      return { success: true };
     } catch (error: any) {
+      console.error('Login error:', error);
+      
       let errorMessage = 'Login failed. Please try again.';
       
       switch (error.code) {
@@ -73,12 +128,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = error.message || 'Login failed.';
       }
       
-      throw new Error(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setLoading(false);
     }
   };
 
   const signup = async (name: string, email: string, password: string) => {
     try {
+      setLoading(true);
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
       // Update profile with display name
@@ -86,16 +144,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: name,
       });
       
-      // Send verification email
-      await sendEmailVerification(userCredential.user);
-      
-      Alert.alert(
-        'Verify Your Email',
-        'A verification email has been sent to your email address. Please verify your email to continue.',
-        [{ text: 'OK' }]
-      );
-      
+      return { success: true };
     } catch (error: any) {
+      console.error('Signup error:', error);
+      
       let errorMessage = 'Signup failed. Please try again.';
       
       switch (error.code) {
@@ -118,22 +170,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = error.message || 'Signup failed.';
       }
       
-      throw new Error(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setLoading(false);
     }
   };
 
   const logout = async () => {
     try {
+      setLoading(true);
       await signOut(auth);
+      await clearAuthPersistence();
+      await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
     } catch (error: any) {
+      console.error('Logout error:', error);
       throw new Error('Logout failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const resetPassword = async (email: string) => {
     try {
       await sendPasswordResetEmail(auth, email);
+      return { success: true };
     } catch (error: any) {
+      console.error('Reset password error:', error);
+      
       let errorMessage = 'Failed to send reset email.';
       
       switch (error.code) {
@@ -150,44 +213,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = error.message || 'Failed to send reset email.';
       }
       
-      throw new Error(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
   const updateUserProfile = async (data: { displayName?: string; photoURL?: string }) => {
     try {
-      if (!auth.currentUser) throw new Error('No user logged in');
+      if (!auth.currentUser) {
+        return { success: false, error: 'No user logged in' };
+      }
+      
       await updateProfile(auth.currentUser, data);
+      return { success: true };
     } catch (error: any) {
-      throw new Error('Failed to update profile.');
-    }
-  };
-
-  const sendVerificationEmail = async () => {
-    try {
-      if (!auth.currentUser) throw new Error('No user logged in');
-      await sendEmailVerification(auth.currentUser);
-    } catch (error: any) {
-      throw new Error('Failed to send verification email.');
+      console.error('Update profile error:', error);
+      return { success: false, error: 'Failed to update profile.' };
     }
   };
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
     try {
-      if (!auth.currentUser || !auth.currentUser.email) {
-        throw new Error('No user logged in');
+      const user = auth.currentUser;
+      if (!user || !user.email) {
+        return { success: false, error: 'No user logged in' };
       }
-      
+
       // Re-authenticate user
-      const credential = EmailAuthProvider.credential(
-        auth.currentUser.email,
-        currentPassword
-      );
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
       
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, newPassword);
+      // Change password
+      await updatePassword(user, newPassword);
       
+      return { success: true };
     } catch (error: any) {
+      console.error('Change password error:', error);
+      
       let errorMessage = 'Failed to change password.';
       
       switch (error.code) {
@@ -198,46 +259,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = 'New password is too weak.';
           break;
         case 'auth/requires-recent-login':
-          errorMessage = 'Please login again to change password.';
+          errorMessage = 'Please log in again to change your password.';
           break;
         default:
           errorMessage = error.message || 'Failed to change password.';
       }
       
-      throw new Error(errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 
-  const deleteAccount = async (password: string) => {
+  const reauthenticate = async (password: string): Promise<boolean> => {
     try {
-      if (!auth.currentUser || !auth.currentUser.email) {
-        throw new Error('No user logged in');
-      }
-      
-      // Re-authenticate user
-      const credential = EmailAuthProvider.credential(
-        auth.currentUser.email,
-        password
-      );
-      
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await auth.currentUser.delete();
-      
-    } catch (error: any) {
-      let errorMessage = 'Failed to delete account.';
-      
-      switch (error.code) {
-        case 'auth/wrong-password':
-          errorMessage = 'Password is incorrect.';
-          break;
-        case 'auth/requires-recent-login':
-          errorMessage = 'Please login again to delete account.';
-          break;
-        default:
-          errorMessage = error.message || 'Failed to delete account.';
-      }
-      
-      throw new Error(errorMessage);
+      const user = auth.currentUser;
+      if (!user || !user.email) return false;
+
+      const credential = EmailAuthProvider.credential(user.email, password);
+      await reauthenticateWithCredential(user, credential);
+      return true;
+    } catch (error) {
+      console.error('Re-authentication error:', error);
+      return false;
     }
   };
 
@@ -249,15 +291,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     resetPassword,
     updateUserProfile,
-    sendVerificationEmail,
     changePassword,
-    deleteAccount,
-    isEmailVerified: user?.emailVerified || false,
+    reauthenticate,
   };
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
