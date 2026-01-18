@@ -13,9 +13,8 @@ import {
   EmailAuthProvider,
   updateEmail
 } from 'firebase/auth';
-import { auth, clearAuthPersistence } from '@/config/firebase';
+import { auth } from '@/config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
 
 interface AuthContextType {
   user: User | null;
@@ -54,13 +53,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Check if saved state is less than 1 hour old
             const oneHourAgo = Date.now() - (60 * 60 * 1000);
             if (parsedState.timestamp > oneHourAgo) {
-              // Only set minimal user data for faster load
-              setUser({
-                ...parsedState.user,
-                // Ensure we have all required User properties
+              // Create a minimal user object for faster load
+              const minimalUser = {
+                uid: parsedState.user.uid,
+                email: parsedState.user.email,
                 emailVerified: parsedState.user.emailVerified || false,
-                metadata: parsedState.user.metadata || { creationTime: '', lastSignInTime: '' }
-              } as User);
+                displayName: parsedState.user.displayName || null,
+                photoURL: parsedState.user.photoURL || null,
+                phoneNumber: parsedState.user.phoneNumber || null,
+                metadata: parsedState.user.metadata || { creationTime: '', lastSignInTime: '' },
+                providerData: [],
+                refreshToken: '',
+                tenantId: null,
+                delete: async () => {},
+                getIdToken: async () => '',
+                getIdTokenResult: async () => ({ token: '', expirationTime: '', issuedAtTime: '', authTime: '', signInProvider: null, signInSecondFactor: null, claims: {} }),
+                reload: async () => {},
+                toJSON: () => ({}),
+                isAnonymous: false,
+                providerId: 'firebase',
+              } as User;
+              
+              setUser(minimalUser);
             }
           }
         }
@@ -80,39 +94,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Force refresh to get latest data
-        await firebaseUser.reload();
-        const refreshedUser = auth.currentUser;
-        setUser(refreshedUser);
+        try {
+          // Force refresh to get latest data
+          await firebaseUser.reload();
+          const refreshedUser = auth.currentUser;
+          setUser(refreshedUser);
+          
+          // Save to AsyncStorage
+          if (refreshedUser) {
+            const userData = {
+              uid: refreshedUser.uid,
+              email: refreshedUser.email,
+              displayName: refreshedUser.displayName,
+              photoURL: refreshedUser.photoURL,
+              emailVerified: refreshedUser.emailVerified,
+              phoneNumber: refreshedUser.phoneNumber,
+              metadata: refreshedUser.metadata
+            };
+            
+            await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+              user: userData,
+              timestamp: Date.now(),
+            }));
+          }
+        } catch (error) {
+          console.error('Error refreshing user:', error);
+          setUser(firebaseUser);
+        }
       } else {
         setUser(null);
+        await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       }
       
       setLoading(false);
-
-      // Save auth state
-      try {
-        if (firebaseUser) {
-          const userData = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName,
-            photoURL: firebaseUser.photoURL,
-            emailVerified: firebaseUser.emailVerified,
-            phoneNumber: firebaseUser.phoneNumber,
-            metadata: firebaseUser.metadata
-          };
-          
-          await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
-            user: userData,
-            timestamp: Date.now(),
-          }));
-        } else {
-          await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
-        }
-      } catch (error) {
-        console.error('Failed to save auth state:', error);
-      }
     });
 
     return unsubscribe;
@@ -131,10 +145,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       setLoading(true);
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Force refresh to get latest verification status
+      await userCredential.user.reload();
+      
       return { success: true };
     } catch (error: any) {
       console.error('Login error:', error);
@@ -170,7 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signup = async (name: string, email: string, password: string) => {
+  const signup = async (name: string, email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       setLoading(true);
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -215,21 +233,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout = async () => {
+  const logout = async (): Promise<void> => {
     try {
       setLoading(true);
+      console.log('Attempting to sign out from Firebase...');
+      
+      // First sign out from Firebase
       await signOut(auth);
-      await clearAuthPersistence();
+      console.log('✅ Firebase sign out successful');
+      
+      // Clear AsyncStorage
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+      console.log('✅ AsyncStorage cleared');
+      
+      // Manually set user to null immediately
+      setUser(null);
+      console.log('✅ User state set to null');
+      
+      // Optional: Force a small delay to ensure state is cleared
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
     } catch (error: any) {
-      console.error('Logout error:', error);
-      throw new Error('Logout failed. Please try again.');
+      console.error('❌ Logout error:', error);
+      
+      let errorMessage = 'Logout failed. Please try again.';
+      
+      switch (error.code) {
+        case 'auth/network-request-failed':
+          errorMessage = 'Network error. Please check your connection.';
+          break;
+        default:
+          errorMessage = error.message || 'Logout failed.';
+      }
+      
+      throw new Error(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
     try {
       await sendPasswordResetEmail(auth, email);
       return { success: true };
@@ -256,7 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const sendVerificationEmail = async () => {
+  const sendVerificationEmail = async (): Promise<{ success: boolean; error?: string }> => {
     try {
       if (!auth.currentUser) {
         return { success: false, error: 'No user logged in' };
@@ -289,7 +332,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateUserProfile = async (data: { displayName?: string; photoURL?: string }) => {
+  const updateUserProfile = async (data: { displayName?: string; photoURL?: string }): Promise<{ success: boolean; error?: string }> => {
     try {
       if (!auth.currentUser) {
         return { success: false, error: 'No user logged in' };
@@ -298,10 +341,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await updateProfile(auth.currentUser, data);
       
       // Update local state
-      setUser({
-        ...auth.currentUser,
-        ...data
-      } as User);
+      const updatedUser = { ...auth.currentUser };
+      if (data.displayName !== undefined) {
+        Object.assign(updatedUser, { displayName: data.displayName });
+      }
+      if (data.photoURL !== undefined) {
+        Object.assign(updatedUser, { photoURL: data.photoURL });
+      }
+      
+      setUser(updatedUser as User);
 
       // Update AsyncStorage
       try {
@@ -341,7 +389,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateUserEmail = async (newEmail: string, password: string) => {
+  const updateUserEmail = async (newEmail: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const currentUser = auth.currentUser;
       if (!currentUser || !currentUser.email) {
@@ -357,6 +405,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Send verification to new email
       await sendEmailVerification(currentUser);
+      
+      // Update local state
+      setUser({ ...currentUser } as User);
       
       return { success: true };
     } catch (error: any) {
@@ -385,7 +436,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const changePassword = async (currentPassword: string, newPassword: string) => {
+  const changePassword = async (currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const user = auth.currentUser;
       if (!user || !user.email) {

@@ -1,15 +1,14 @@
 import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { Platform, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DashboardScreen from "@/screens/DashboardScreen";
 import FieldsScreen from "@/screens/FieldsScreen";
 import ControlScreen from "@/screens/ControlScreen";
 import InsightsScreen from "@/screens/InsightsScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 import { useTheme } from "@/hooks/useTheme";
-import { Colors } from "@/constants/theme";
 
 export type MainTabParamList = {
   Dashboard: undefined;
@@ -23,37 +22,42 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabNavigator() {
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  // Calculate safe tab bar height
+  const getTabBarHeight = () => {
+    const baseHeight = Platform.OS === "ios" ? 52 : 60;
+    const bottomInset = Platform.OS === "ios" ? insets.bottom : 0;
+    return baseHeight + bottomInset;
+  };
+
+  const tabBarHeight = getTabBarHeight();
 
   return (
     <Tab.Navigator
       initialRouteName="Dashboard"
       screenOptions={{
-        tabBarActiveTintColor: theme.tabIconSelected,
-        tabBarInactiveTintColor: theme.tabIconDefault,
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.textSecondary,
         tabBarStyle: {
-          position: "absolute",
-          backgroundColor: Platform.select({
-            ios: "transparent",
-            android: theme.backgroundRoot,
-          }),
-          borderTopWidth: 0,
-          elevation: 0,
-          height: Platform.OS === "ios" ? 88 : 64,
-          paddingBottom: Platform.OS === "ios" ? 28 : 8,
+          backgroundColor: theme.backgroundRoot,
+          borderTopWidth: 1,
+          borderTopColor: theme.border,
+          height: tabBarHeight,
+          paddingBottom: Platform.OS === "ios" ? insets.bottom : 8,
           paddingTop: 8,
         },
-        tabBarBackground: () =>
-          Platform.OS === "ios" ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? "dark" : "light"}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : null,
         headerShown: false,
         tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "500",
+          fontSize: 10,
+          fontWeight: "600",
+          marginBottom: 4,
+        },
+        tabBarIconStyle: {
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          height: 44,
         },
       }}
     >
@@ -62,8 +66,14 @@ export default function MainTabNavigator() {
         component={DashboardScreen}
         options={{
           title: "Dashboard",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="home" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={styles.iconContainer}>
+              <Feather 
+                name="home" 
+                size={22} 
+                color={color} 
+              />
+            </View>
           ),
         }}
       />
@@ -72,8 +82,14 @@ export default function MainTabNavigator() {
         component={FieldsScreen}
         options={{
           title: "Fields",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="grid" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={styles.iconContainer}>
+              <Feather 
+                name="grid" 
+                size={22} 
+                color={color} 
+              />
+            </View>
           ),
         }}
       />
@@ -83,25 +99,19 @@ export default function MainTabNavigator() {
         options={{
           title: "Control",
           tabBarIcon: ({ color, size, focused }) => (
-            <View
-              style={[
-                styles.controlIcon,
-                {
-                  backgroundColor: focused
-                    ? isDark
-                      ? Colors.dark.primary
-                      : Colors.light.primary
-                    : isDark
-                      ? Colors.dark.backgroundSecondary
-                      : Colors.light.backgroundSecondary,
-                },
-              ]}
-            >
-              <Feather
-                name="sliders"
-                size={22}
-                color={focused ? "#FFFFFF" : color}
-              />
+            <View style={styles.iconContainer}>
+              <View style={[
+                styles.controlButton,
+                { 
+                  backgroundColor: focused ? theme.primary : theme.backgroundSecondary 
+                }
+              ]}>
+                <Feather
+                  name="sliders"
+                  size={20}
+                  color={focused ? "#FFFFFF" : color}
+                />
+              </View>
             </View>
           ),
         }}
@@ -111,8 +121,14 @@ export default function MainTabNavigator() {
         component={InsightsScreen}
         options={{
           title: "Insights",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="trending-up" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={styles.iconContainer}>
+              <Feather 
+                name="trending-up" 
+                size={22} 
+                color={color} 
+              />
+            </View>
           ),
         }}
       />
@@ -121,8 +137,14 @@ export default function MainTabNavigator() {
         component={ProfileScreen}
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="user" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={styles.iconContainer}>
+              <Feather 
+                name="user" 
+                size={22} 
+                color={color} 
+              />
+            </View>
           ),
         }}
       />
@@ -131,12 +153,17 @@ export default function MainTabNavigator() {
 }
 
 const styles = StyleSheet.create({
-  controlIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  iconContainer: {
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -8,
+    height: 24,
+    width: 24,
+  },
+  controlButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

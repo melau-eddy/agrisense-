@@ -1,15 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   StyleSheet, 
-  Pressable, 
   Alert, 
   ScrollView,
   Modal,
-  TextInput,
   Switch,
   Linking,
-  Platform 
+  Platform,
+  TouchableOpacity
 } from 'react-native';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/ThemedText';
@@ -57,6 +56,10 @@ export default function ProfileScreen() {
   });
   const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({});
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  
+  // Use a ref to track if logout is in progress
+  const logoutInProgress = useRef(false);
 
   // Load user data when component mounts
   useEffect(() => {
@@ -69,36 +72,74 @@ export default function ProfileScreen() {
   }, [user]);
 
   const handleLogout = () => {
+    console.log('Logout button clicked');
+    
     Alert.alert(
       "Logout",
       "Are you sure you want to logout?",
       [
-        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Cancel", 
+          style: "cancel"
+        },
         { 
           text: "Logout", 
           style: "destructive",
-          onPress: async () => {
-            try {
-              await logout();
-            } catch (error) {
-              Alert.alert("Logout Failed", "Please try again.");
-            }
+          onPress: () => {
+            console.log('User confirmed logout');
+            executeLogout();
           }
         },
       ]
     );
   };
 
+  // Separate the actual logout logic
+  const executeLogout = async () => {
+    if (logoutInProgress.current) {
+      return;
+    }
+
+    logoutInProgress.current = true;
+    setIsLoggingOut(true);
+    
+    try {
+      await logout();
+    } catch (error: any) {
+      console.error('Logout error:', error);
+      Alert.alert("Logout Failed", error.message || "Please try again.");
+    } finally {
+      setIsLoggingOut(false);
+      logoutInProgress.current = false;
+    }
+  };
+
+  // Test logout function (keep this for debugging)
+  const handleTestLogout = async () => {
+    console.log('Test logout clicked');
+    try {
+      await logout();
+      console.log('Test logout successful');
+    } catch (error: any) {
+      console.error('Test logout failed:', error);
+      Alert.alert("Test Logout Failed", error.message || "Please try again.");
+    }
+  };
+
   const handleResendVerification = async () => {
     try {
-      await sendVerificationEmail();
-      Alert.alert(
-        "Verification Email Sent",
-        "Please check your email for the verification link.",
-        [{ text: "OK" }]
-      );
+      const result = await sendVerificationEmail();
+      if (result.success) {
+        Alert.alert(
+          "Verification Email Sent",
+          "Please check your email for the verification link.",
+          [{ text: "OK" }]
+        );
+      } else {
+        Alert.alert("Failed to Send", result.error || "Unknown error");
+      }
     } catch (error: any) {
-      Alert.alert("Failed to Send", error.message);
+      Alert.alert("Failed to Send", error.message || "Unknown error");
     }
   };
 
@@ -126,25 +167,28 @@ export default function ProfileScreen() {
 
     setProfileLoading(true);
     try {
-      await updateUserProfile({
+      const result = await updateUserProfile({
         displayName: profileForm.displayName.trim(),
-        // Add phoneNumber to your updateUserProfile function if needed
       });
       
-      Alert.alert(
-        "Profile Updated",
-        "Your profile has been updated successfully.",
-        [
-          { 
-            text: "OK", 
-            onPress: () => {
-              setEditProfileModal(false);
+      if (result.success) {
+        Alert.alert(
+          "Profile Updated",
+          "Your profile has been updated successfully.",
+          [
+            { 
+              text: "OK", 
+              onPress: () => {
+                setEditProfileModal(false);
+              }
             }
-          }
-        ]
-      );
+          ]
+        );
+      } else {
+        Alert.alert("Update Failed", result.error || "Unknown error");
+      }
     } catch (error: any) {
-      Alert.alert("Update Failed", error.message);
+      Alert.alert("Update Failed", error.message || "Unknown error");
     } finally {
       setProfileLoading(false);
     }
@@ -179,26 +223,31 @@ export default function ProfileScreen() {
 
     setPasswordLoading(true);
     try {
-      await changePassword(passwordForm.currentPassword, passwordForm.newPassword);
-      Alert.alert(
-        "Success",
-        "Your password has been changed successfully.",
-        [
-          { 
-            text: "OK", 
-            onPress: () => {
-              setChangePasswordModal(false);
-              setPasswordForm({
-                currentPassword: '',
-                newPassword: '',
-                confirmPassword: '',
-              });
+      const result = await changePassword(passwordForm.currentPassword, passwordForm.newPassword);
+      
+      if (result.success) {
+        Alert.alert(
+          "Success",
+          "Your password has been changed successfully.",
+          [
+            { 
+              text: "OK", 
+              onPress: () => {
+                setChangePasswordModal(false);
+                setPasswordForm({
+                  currentPassword: '',
+                  newPassword: '',
+                  confirmPassword: '',
+                });
+              }
             }
-          }
-        ]
-      );
+          ]
+        );
+      } else {
+        Alert.alert("Change Password Failed", result.error || "Unknown error");
+      }
     } catch (error: any) {
-      Alert.alert("Change Password Failed", error.message);
+      Alert.alert("Change Password Failed", error.message || "Unknown error");
     } finally {
       setPasswordLoading(false);
     }
@@ -213,15 +262,9 @@ export default function ProfileScreen() {
     
     setNotificationSettings(newSettings);
     
-    // Here you would save to your backend/Firestore
     try {
-      // Example: Save to Firestore
-      // await db.collection('users').doc(user.uid).update({
-      //   notificationSettings: newSettings
-      // });
       console.log('Notification settings updated:', newSettings);
     } catch (error) {
-      // Revert on error
       setNotificationSettings(notificationSettings);
       Alert.alert("Error", "Failed to update notification settings");
     }
@@ -240,7 +283,6 @@ export default function ProfileScreen() {
   };
 
   const handleViewFAQ = () => {
-    // You can replace this with your actual FAQ URL
     Linking.openURL('https://agrisense.faq.com')
       .catch(() => {
         Alert.alert("Error", "Could not open FAQ page");
@@ -275,7 +317,10 @@ export default function ProfileScreen() {
   return (
     <>
       <ThemedView style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
           <View style={styles.header}>
             <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
               <ThemedText style={styles.avatarText}>
@@ -290,15 +335,16 @@ export default function ProfileScreen() {
             </ThemedText>
             
             {user && !user.emailVerified && (
-              <Pressable 
+              <TouchableOpacity 
                 style={[styles.verificationBadge, { backgroundColor: theme.warning + '20' }]}
                 onPress={handleResendVerification}
+                activeOpacity={0.7}
               >
                 <Feather name="alert-circle" size={16} color={theme.warning} />
                 <ThemedText style={[styles.verificationText, { color: theme.warning }]}>
                   Email not verified. Tap to resend verification.
                 </ThemedText>
-              </Pressable>
+              </TouchableOpacity>
             )}
             
             {user?.emailVerified && (
@@ -312,60 +358,68 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.menu}>
-            <Pressable 
+            <TouchableOpacity 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
               onPress={() => setEditProfileModal(true)}
+              activeOpacity={0.7}
             >
               <View style={styles.menuLeft}>
                 <Feather name="user" size={20} color={theme.text} />
                 <ThemedText style={styles.menuText}>Edit Profile</ThemedText>
               </View>
               <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable 
+            <TouchableOpacity 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
               onPress={() => setChangePasswordModal(true)}
+              activeOpacity={0.7}
             >
               <View style={styles.menuLeft}>
                 <Feather name="lock" size={20} color={theme.text} />
                 <ThemedText style={styles.menuText}>Change Password</ThemedText>
               </View>
               <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable 
+            <TouchableOpacity 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
               onPress={() => setNotificationsModal(true)}
+              activeOpacity={0.7}
             >
               <View style={styles.menuLeft}>
                 <Feather name="bell" size={20} color={theme.text} />
                 <ThemedText style={styles.menuText}>Notifications</ThemedText>
               </View>
               <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable 
+            <TouchableOpacity 
               style={[styles.menuItem, { borderBottomColor: theme.border }]}
               onPress={() => setHelpSupportModal(true)}
+              activeOpacity={0.7}
             >
               <View style={styles.menuLeft}>
                 <Feather name="help-circle" size={20} color={theme.text} />
                 <ThemedText style={styles.menuText}>Help & Support</ThemedText>
               </View>
               <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-            </Pressable>
+            </TouchableOpacity>
           </View>
 
-          <Pressable 
-            style={[styles.logoutButton, { backgroundColor: theme.backgroundSecondary }]}
-            onPress={handleLogout}
+          {/* Test Logout Button - Styled like the real logout button */}
+          <TouchableOpacity 
+            style={[styles.logoutButton, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.md }]}
+            onPress={handleTestLogout}
+            activeOpacity={0.7}
           >
             <Feather name="log-out" size={20} color={theme.critical} />
             <ThemedText style={[styles.logoutText, { color: theme.critical }]}>
               Logout
             </ThemedText>
-          </Pressable>
+          </TouchableOpacity>
+
+          
 
           <ThemedText style={[styles.version, { color: theme.textSecondary }]}>
             AgriSense v1.0.0
@@ -383,9 +437,9 @@ export default function ProfileScreen() {
           <ThemedView style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Edit Profile</ThemedText>
-              <Pressable onPress={() => setEditProfileModal(false)}>
+              <TouchableOpacity onPress={() => setEditProfileModal(false)} activeOpacity={0.7}>
                 <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
+              </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
@@ -448,9 +502,9 @@ export default function ProfileScreen() {
           <ThemedView style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Change Password</ThemedText>
-              <Pressable onPress={() => setChangePasswordModal(false)}>
+              <TouchableOpacity onPress={() => setChangePasswordModal(false)} activeOpacity={0.7}>
                 <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.modalForm}>
@@ -518,9 +572,9 @@ export default function ProfileScreen() {
           <ThemedView style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Notification Settings</ThemedText>
-              <Pressable onPress={() => setNotificationsModal(false)}>
+              <TouchableOpacity onPress={() => setNotificationsModal(false)} activeOpacity={0.7}>
                 <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
+              </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.notificationsList} showsVerticalScrollIndicator={false}>
@@ -653,15 +707,16 @@ export default function ProfileScreen() {
           <ThemedView style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Help & Support</ThemedText>
-              <Pressable onPress={() => setHelpSupportModal(false)}>
+              <TouchableOpacity onPress={() => setHelpSupportModal(false)} activeOpacity={0.7}>
                 <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
+              </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.helpSupportList} showsVerticalScrollIndicator={false}>
-              <Pressable 
+              <TouchableOpacity 
                 style={[styles.helpItem, { borderBottomColor: theme.border }]}
                 onPress={handleContactSupport}
+                activeOpacity={0.7}
               >
                 <View style={styles.helpLeft}>
                   <Feather name="mail" size={24} color={theme.primary} />
@@ -673,11 +728,12 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-              </Pressable>
+              </TouchableOpacity>
 
-              <Pressable 
+              <TouchableOpacity 
                 style={[styles.helpItem, { borderBottomColor: theme.border }]}
                 onPress={handleViewFAQ}
+                activeOpacity={0.7}
               >
                 <View style={styles.helpLeft}>
                   <Feather name="help-circle" size={24} color={theme.primary} />
@@ -689,11 +745,12 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-              </Pressable>
+              </TouchableOpacity>
 
-              <Pressable 
+              <TouchableOpacity 
                 style={[styles.helpItem, { borderBottomColor: theme.border }]}
                 onPress={handleSubmitFeedback}
+                activeOpacity={0.7}
               >
                 <View style={styles.helpLeft}>
                   <Feather name="message-square" size={24} color={theme.primary} />
@@ -705,11 +762,12 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-              </Pressable>
+              </TouchableOpacity>
 
-              <Pressable 
+              <TouchableOpacity 
                 style={[styles.helpItem, { borderBottomColor: theme.border }]}
                 onPress={handleRateApp}
+                activeOpacity={0.7}
               >
                 <View style={styles.helpLeft}>
                   <Feather name="star" size={24} color={theme.primary} />
@@ -721,7 +779,7 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Feather name="chevron-right" size={20} color={theme.textSecondary} />
-              </Pressable>
+              </TouchableOpacity>
 
               <View style={styles.contactInfo}>
                 <ThemedText type="h4" style={{ marginBottom: Spacing.sm }}>
@@ -748,7 +806,10 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scrollContent: {
     padding: Spacing.lg,
+    paddingBottom: 100,
   },
   header: {
     alignItems: 'center',

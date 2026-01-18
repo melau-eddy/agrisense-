@@ -77,4 +77,4 @@ export async function testFirebaseConnection(): Promise<boolean> {
     console.log('⚠️ Firebase connection test failed:', error);
     return false;
   }
-} 
+}
