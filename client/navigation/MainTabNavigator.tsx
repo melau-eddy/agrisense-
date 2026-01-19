@@ -1,7 +1,7 @@
 import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View, Dimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DashboardScreen from "@/screens/DashboardScreen";
 import FieldsScreen from "@/screens/FieldsScreen";
@@ -9,6 +9,7 @@ import ControlScreen from "@/screens/ControlScreen";
 import InsightsScreen from "@/screens/InsightsScreen";
 import ProfileScreen from "@/screens/ProfileScreen";
 import { useTheme } from "@/hooks/useTheme";
+import { Spacing } from "@/constants/theme";
 
 export type MainTabParamList = {
   Dashboard: undefined;
@@ -19,14 +20,16 @@ export type MainTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
+const { width } = Dimensions.get('window');
 
 export default function MainTabNavigator() {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
 
-  // Calculate safe tab bar height
+  // Responsive tab bar height calculation
   const getTabBarHeight = () => {
-    const baseHeight = Platform.OS === "ios" ? 52 : 60;
+    const isSmallDevice = width < 375; // iPhone SE, small Android devices
+    const baseHeight = isSmallDevice ? 48 : Platform.OS === "ios" ? 52 : 60;
     const bottomInset = Platform.OS === "ios" ? insets.bottom : 0;
     return baseHeight + bottomInset;
   };
@@ -44,33 +47,36 @@ export default function MainTabNavigator() {
           borderTopWidth: 1,
           borderTopColor: theme.border,
           height: tabBarHeight,
-          paddingBottom: Platform.OS === "ios" ? insets.bottom : 8,
-          paddingTop: 8,
+          paddingBottom: Platform.OS === "ios" ? insets.bottom : Spacing.sm,
+          paddingTop: Platform.OS === "ios" ? Spacing.sm : Spacing.xs,
+          paddingHorizontal: width < 375 ? Spacing.xs : Spacing.sm,
         },
         headerShown: false,
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: width < 375 ? 9 : 10,
           fontWeight: "600",
-          marginBottom: 4,
+          marginBottom: Platform.OS === "ios" ? 0 : Spacing.xs,
         },
         tabBarIconStyle: {
-          marginTop: 2,
+          marginTop: Platform.OS === "ios" ? 0 : Spacing.xxs,
         },
         tabBarItemStyle: {
-          height: 44,
+          height: width < 375 ? 40 : 44,
+          paddingHorizontal: width < 375 ? 2 : 4,
         },
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
         options={{
-          title: "Dashboard",
+          title: "Home",
           tabBarIcon: ({ color, size, focused }) => (
             <View style={styles.iconContainer}>
               <Feather 
                 name="home" 
-                size={22} 
+                size={width < 375 ? 20 : 22} 
                 color={color} 
               />
             </View>
@@ -86,7 +92,7 @@ export default function MainTabNavigator() {
             <View style={styles.iconContainer}>
               <Feather 
                 name="grid" 
-                size={22} 
+                size={width < 375 ? 20 : 22} 
                 color={color} 
               />
             </View>
@@ -103,12 +109,15 @@ export default function MainTabNavigator() {
               <View style={[
                 styles.controlButton,
                 { 
-                  backgroundColor: focused ? theme.primary : theme.backgroundSecondary 
+                  backgroundColor: focused ? theme.primary : theme.backgroundSecondary,
+                  width: width < 375 ? 36 : 40,
+                  height: width < 375 ? 36 : 40,
+                  borderRadius: width < 375 ? 18 : 20,
                 }
               ]}>
                 <Feather
                   name="sliders"
-                  size={20}
+                  size={width < 375 ? 18 : 20}
                   color={focused ? "#FFFFFF" : color}
                 />
               </View>
@@ -125,7 +134,7 @@ export default function MainTabNavigator() {
             <View style={styles.iconContainer}>
               <Feather 
                 name="trending-up" 
-                size={22} 
+                size={width < 375 ? 20 : 22} 
                 color={color} 
               />
             </View>
@@ -141,7 +150,7 @@ export default function MainTabNavigator() {
             <View style={styles.iconContainer}>
               <Feather 
                 name="user" 
-                size={22} 
+                size={width < 375 ? 20 : 22} 
                 color={color} 
               />
             </View>
@@ -156,13 +165,8 @@ const styles = StyleSheet.create({
   iconContainer: {
     alignItems: "center",
     justifyContent: "center",
-    height: 24,
-    width: 24,
   },
   controlButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, NavigationProp } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
@@ -23,6 +23,15 @@ import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import { mockFields, mockIrrigationLogs } from "@/lib/mockData";
+
+// Define your navigation types
+type RootStackParamList = {
+  Control: undefined;
+  Farms: undefined;
+  AddFarm: undefined;
+  FieldDetail: { fieldId: string };
+  // Add other screens as needed
+};
 
 // Types for irrigation settings
 interface IrrigationSettings {
@@ -39,7 +48,7 @@ const IRRIGATION_SETTINGS_KEY = '@agrisense_irrigation_settings';
 export default function ControlScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const { theme, isDark } = useTheme();
 
   const [selectedField, setSelectedField] = useState(mockFields[0]);
@@ -238,7 +247,26 @@ export default function ControlScreen() {
   const handleAddFarm = () => {
     triggerHaptic('impact');
     setShowAddFarmModal(false);
-    navigation.navigate('AddFarm' as never);
+    
+    // Try to navigate to AddFarm screen
+    // If this doesn't work, check your navigation structure
+    try {
+      navigation.navigate('AddFarm');
+    } catch (error) {
+      console.error('Navigation error:', error);
+      // Fallback: Show message that Add Farm is not available
+      Alert.alert(
+        "Add Farm",
+        "The Add Farm screen is not available in the current navigation setup. Please use Quick Add or check your navigation configuration.",
+        [
+          { text: "OK", style: "default" },
+          {
+            text: "Use Quick Add",
+            onPress: handleQuickAddFarm
+          }
+        ]
+      );
+    }
   };
 
   const handleQuickAddFarm = () => {
@@ -294,11 +322,25 @@ export default function ControlScreen() {
         [
           {
             text: "View Farms",
-            onPress: () => navigation.navigate('Farms' as never)
+            onPress: () => {
+              try {
+                navigation.navigate('Farms');
+              } catch (error) {
+                console.error('Navigation to Farms failed:', error);
+                Alert.alert("Info", "Farms screen is not available in current navigation.");
+              }
+            }
           },
           {
             text: "Add Details",
-            onPress: () => navigation.navigate('AddFarm' as never)
+            onPress: () => {
+              try {
+                navigation.navigate('AddFarm');
+              } catch (error) {
+                console.error('Navigation to AddFarm failed:', error);
+                Alert.alert("Info", "Add Farm screen is not available in current navigation.");
+              }
+            }
           },
           {
             text: "OK",
