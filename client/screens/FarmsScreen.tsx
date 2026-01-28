@@ -15,6 +15,15 @@ import { useTheme } from '@/hooks/useTheme';
 import { useFarms } from '@/contexts/FarmContext';
 import { Spacing, BorderRadius } from '@/constants/theme';
 
+interface Farm {
+  id: string;
+  name: string;
+  location: string;
+  totalAcres: number;
+  cropTypes: string[];
+  status: string;
+}
+
 export default function FarmsScreen() {
   const navigation = useNavigation();
   const { theme } = useTheme();
@@ -49,7 +58,7 @@ export default function FarmsScreen() {
     );
   };
 
-  const renderFarmItem = ({ item }: { item: any }) => (
+  const renderFarmItem = ({ item }: { item: Farm }) => (
     <TouchableOpacity
       style={[
         styles.farmCard,

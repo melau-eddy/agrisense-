@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { 
-  View, 
-  StyleSheet, 
-  ScrollView, 
-  Pressable, 
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Pressable,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -43,7 +43,6 @@ export default function DashboardScreen() {
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [unsubscribe, setUnsubscribe] = useState<() => void>(() => () => {});
 
-  // Subscribe to real-time alerts
   useEffect(() => {
     if (!user?.uid || !isFocused) return;
 
@@ -71,16 +70,13 @@ export default function DashboardScreen() {
     };
   }, [user?.uid, isFocused]);
 
-  // Refresh alerts when screen comes into focus
   useEffect(() => {
     if (isFocused) {
-      // Force a refresh by re-subscribing
       const auth = getAuth();
       const currentUser = auth.currentUser;
       
       if (currentUser) {
         setIsLoadingAlerts(true);
-        // Subscription will automatically update
       }
     }
   }, [isFocused]);
@@ -127,6 +123,8 @@ export default function DashboardScreen() {
       case "notifications":
         navigation.navigate("Notifications");
         break;
+      default:
+        Alert.alert("Action", `${action} feature coming soon`);
     }
   };
 
@@ -159,7 +157,6 @@ export default function DashboardScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
         <View style={styles.header}>
           <HeaderTitle title="AgriSense" />
           <View style={styles.headerActions}>
@@ -172,7 +169,7 @@ export default function DashboardScreen() {
               ) : (
                 <>
                   <Feather name="bell" size={20} color={theme.text} />
-                  {unreadCount > 0 ? (
+                  {unreadCount > 0 && (
                     <View
                       style={[
                         styles.badge,
@@ -183,14 +180,13 @@ export default function DashboardScreen() {
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </ThemedText>
                     </View>
-                  ) : null}
+                  )}
                 </>
               )}
             </Pressable>
           </View>
         </View>
 
-        {/* Welcome Message */}
         <View style={styles.welcomeSection}>
           <ThemedText type="h2" style={styles.welcomeTitle}>
             Welcome back, {user?.displayName?.split(' ')[0] || 'Farmer'}! 🌱
@@ -200,7 +196,6 @@ export default function DashboardScreen() {
           </ThemedText>
         </View>
 
-        {/* Alert Summary Banner */}
         {recentAlert && (
           <Pressable
             style={[
@@ -243,8 +238,8 @@ export default function DashboardScreen() {
                           : theme.text
                     }
                   ]}>
-                    {recentAlert.type === 'critical' ? '🚨 Critical Alert' : 
-                     recentAlert.type === 'warning' ? '⚠️ Warning' : 'ℹ️ Notification'}
+                    {recentAlert.type === 'critical' ? 'Critical Alert' : 
+                     recentAlert.type === 'warning' ? 'Warning' : 'Notification'}
                   </ThemedText>
                   <ThemedText 
                     style={[styles.alertBannerMessage, { color: theme.text }]}
@@ -259,7 +254,6 @@ export default function DashboardScreen() {
           </Pressable>
         )}
 
-        {/* AI Assistant Quick Access */}
         <Pressable
           style={[
             styles.aiAssistantCard,
@@ -286,13 +280,12 @@ export default function DashboardScreen() {
           </View>
         </Pressable>
 
-        {/* Overview Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
               Farm Overview
             </ThemedText>
-            <Pressable onPress={() => Alert.alert("Coming Soon", "Detailed analytics will be available soon")}>
+            <Pressable onPress={() => Alert.alert("Analytics", "Detailed analytics will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
                 View Analytics
               </ThemedText>
@@ -342,7 +335,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Quick Actions */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
             Quick Actions
@@ -392,7 +384,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Impact Metrics */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
             Environmental Impact
@@ -449,7 +440,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Weather Forecast */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
@@ -481,7 +471,6 @@ export default function DashboardScreen() {
                 <ThemedText
                   style={[
                     styles.weatherDay,
-                    index === 0 && { color: "#FFFFFF" },
                     { color: index === 0 ? "#FFFFFF" : theme.textSecondary },
                   ]}
                 >
@@ -497,7 +486,7 @@ export default function DashboardScreen() {
                 >
                   {day.temp}°
                 </ThemedText>
-                {day.rain > 0 ? (
+                {day.rain > 0 && (
                   <View style={styles.rainRow}>
                     <Feather
                       name="droplet"
@@ -520,19 +509,18 @@ export default function DashboardScreen() {
                       {day.rain}%
                     </ThemedText>
                   </View>
-                ) : null}
+                )}
               </View>
             ))}
           </ScrollView>
         </View>
 
-        {/* Field Summary */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
               Field Status
             </ThemedText>
-            <Pressable onPress={() => Alert.alert("Coming Soon", "All fields view will be available soon")}>
+            <Pressable onPress={() => Alert.alert("Fields", "All fields view will be available soon")}>
               <ThemedText type="link" style={{ color: theme.link }}>
                 View All Fields
               </ThemedText>
@@ -596,7 +584,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Recent Activity */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>
             Recent Activity
@@ -806,7 +793,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   sectionTitle: {
-    // marginBottom is handled by sectionHeader
+    marginBottom: 0,
   },
   kpiGrid: {
     flexDirection: "row",

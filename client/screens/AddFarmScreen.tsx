@@ -10,12 +10,13 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
+import { getDatabase, ref, set, push } from 'firebase/database';
+
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { AuthInput } from '@/components/auth/AuthInput';
 import { AuthButton } from '@/components/auth/AuthButton';
 import { useTheme } from '@/hooks/useTheme';
-import { useFarms } from '@/contexts/FarmContext';
 import { Spacing, BorderRadius } from '@/constants/theme';
 
 // Crop types options
@@ -58,12 +59,22 @@ const IRRIGATION_TYPES = [
   'Other'
 ];
 
+interface FarmFormData {
+  name: string;
+  location: string;
+  totalAcres: string;
+  description: string;
+  soilType: string;
+  irrigationType: string;
+  latitude: string;
+  longitude: string;
+}
+
 export default function AddFarmScreen() {
   const navigation = useNavigation();
   const { theme } = useTheme();
-  const { addFarm, loading } = useFarms();
   
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FarmFormData>({
     name: '',
     location: '',
     totalAcres: '',
@@ -76,6 +87,9 @@ export default function AddFarmScreen() {
   
   const [selectedCrops, setSelectedCrops] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+
+  const db = getDatabase();
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -129,26 +143,34 @@ export default function AddFarmScreen() {
   const handleSubmit = async () => {
     if (!validateForm()) return;
 
-    const farmData = {
-      name: formData.name.trim(),
-      location: formData.location.trim(),
-      totalAcres: parseFloat(formData.totalAcres),
-      cropTypes: selectedCrops,
-      soilType: formData.soilType || 'Other',
-      irrigationType: formData.irrigationType || 'Other',
-      description: formData.description.trim() || undefined,
-      coordinates: formData.latitude && formData.longitude ? {
-        latitude: parseFloat(formData.latitude),
-        longitude: parseFloat(formData.longitude),
-      } : undefined,
-    };
+    try {
+      setLoading(true);
 
-    const result = await addFarm(farmData);
-    
-    if (result.success) {
+      const farmData = {
+        name: formData.name.trim(),
+        location: formData.location.trim(),
+        totalAcres: parseFloat(formData.totalAcres),
+        cropTypes: selectedCrops,
+        soilType: formData.soilType || 'Other',
+        irrigationType: formData.irrigationType || 'Other',
+        description: formData.description.trim() || '',
+        coordinates: formData.latitude && formData.longitude ? {
+          latitude: parseFloat(formData.latitude),
+          longitude: parseFloat(formData.longitude),
+        } : null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'healthy' as const,
+      };
+
+      // Save to Firebase Realtime Database
+      const farmsRef = ref(db, 'farms');
+      const newFarmRef = push(farmsRef);
+      await set(newFarmRef, farmData);
+
       Alert.alert(
         '✅ Farm Added Successfully',
-        `Your farm "${formData.name}" has been added.`,
+        `Your farm "${formData.name}" has been added to the database.`,
         [
           {
             text: 'View Farms',
@@ -174,8 +196,11 @@ export default function AddFarmScreen() {
           },
         ]
       );
-    } else {
-      Alert.alert('❌ Error', result.error || 'Failed to add farm. Please try again.');
+    } catch (error) {
+      console.error('Error adding farm:', error);
+      Alert.alert('❌ Error', 'Failed to add farm. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -237,7 +262,7 @@ export default function AddFarmScreen() {
 
           <View style={styles.form}>
             <AuthInput
-              label="Farm Name"
+              label="Farm Name *"
               placeholder="Enter farm name"
               value={formData.name}
               onChangeText={(text) => setFormData({ ...formData, name: text })}
@@ -247,7 +272,7 @@ export default function AddFarmScreen() {
             />
 
             <AuthInput
-              label="Location"
+              label="Location *"
               placeholder="City, State, Country"
               value={formData.location}
               onChangeText={(text) => setFormData({ ...formData, location: text })}
@@ -257,7 +282,7 @@ export default function AddFarmScreen() {
             />
 
             <AuthInput
-              label="Total Acres"
+              label="Total Acres *"
               placeholder="Enter total acres"
               value={formData.totalAcres}
               onChangeText={(text) => setFormData({ ...formData, totalAcres: text })}
@@ -355,7 +380,8 @@ export default function AddFarmScreen() {
                   !formData.name.trim() ||
                   !formData.location.trim() ||
                   !formData.totalAcres.trim() ||
-                  selectedCrops.length === 0
+                  selectedCrops.length === 0 ||
+                  loading
                 }
               />
             </View>

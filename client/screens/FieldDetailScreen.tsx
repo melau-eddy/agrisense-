@@ -16,6 +16,20 @@ import type { RootStackParamList } from "@/navigation/RootStackNavigator";
 
 type FieldDetailRouteProp = RouteProp<RootStackParamList, "FieldDetail">;
 
+interface SensorCardProps {
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  value: number;
+  unit: string;
+  trend: "up" | "down" | "stable";
+  color?: string;
+}
+
+interface TimeRangeButtonProps {
+  range: "24h" | "7d" | "30d";
+  label: string;
+}
+
 export default function FieldDetailScreen() {
   const insets = useSafeAreaInsets();
   const route = useRoute<FieldDetailRouteProp>();
@@ -54,6 +68,8 @@ export default function FieldDetailScreen() {
         return isDark ? Colors.dark.warning : Colors.light.warning;
       case "critical":
         return isDark ? Colors.dark.critical : Colors.light.critical;
+      default:
+        return isDark ? Colors.dark.success : Colors.light.success;
     }
   };
 
@@ -65,24 +81,12 @@ export default function FieldDetailScreen() {
         return "Attention Needed";
       case "critical":
         return "Critical";
+      default:
+        return "Healthy";
     }
   };
 
-  const SensorCard = ({
-    icon,
-    label,
-    value,
-    unit,
-    trend,
-    color,
-  }: {
-    icon: keyof typeof Feather.glyphMap;
-    label: string;
-    value: number;
-    unit: string;
-    trend: "up" | "down" | "stable";
-    color?: string;
-  }) => {
+  const SensorCard: React.FC<SensorCardProps> = ({ icon, label, value, unit, trend, color }) => {
     const trendIcon =
       trend === "up" ? "arrow-up" : trend === "down" ? "arrow-down" : "minus";
     const trendColor =
@@ -138,13 +142,7 @@ export default function FieldDetailScreen() {
     );
   };
 
-  const TimeRangeButton = ({
-    range,
-    label,
-  }: {
-    range: "24h" | "7d" | "30d";
-    label: string;
-  }) => (
+  const TimeRangeButton: React.FC<TimeRangeButtonProps> = ({ range, label }) => (
     <Pressable
       onPress={() => setTimeRange(range)}
       style={[
@@ -413,7 +411,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "baseline",
   },
-  sensorValue: {},
+  sensorValue: {
+    fontSize: 24,
+    fontWeight: "600",
+  },
   sensorUnit: {
     fontSize: 14,
     marginLeft: 2,
@@ -444,6 +445,7 @@ const styles = StyleSheet.create({
   },
   healthLabel: {
     fontSize: 14,
+    fontWeight: "500",
   },
   healthMeta: {
     fontSize: 12,

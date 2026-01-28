@@ -5,16 +5,15 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/contexts/AuthContext';
-import { Spacing, BorderRadius, Colors } from '@/constants/theme';
+import { Spacing, BorderRadius } from '@/constants/theme';
 
 export default function HomeScreen() {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const { user } = useAuth();
 
   return (
     <ThemedView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
         <View style={styles.header}>
           <View>
             <ThemedText type="h1" style={styles.greeting}>
@@ -38,7 +37,6 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {/* Stats Cards */}
         <View style={styles.statsGrid}>
           <View style={[styles.statCard, { backgroundColor: theme.cardBackground }]}>
             <View style={[styles.statIcon, { backgroundColor: `${theme.primary}15` }]}>
@@ -61,7 +59,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Quick Actions */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>Quick Actions</ThemedText>
           <View style={styles.actionsGrid}>
@@ -95,7 +92,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Recent Activity */}
         <View style={styles.section}>
           <ThemedText type="h3" style={styles.sectionTitle}>Recent Activity</ThemedText>
           <View style={[styles.activityCard, { backgroundColor: theme.cardBackground }]}>

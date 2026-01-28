@@ -1,80 +1,38 @@
-import { initializeApp } from 'firebase/app';
-import { initializeAuth, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+// /config/firebase.ts
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
+import { getDatabase } from "firebase/database";
 
-// Firebase configuration
+// CORRECT Firebase configuration with Asia region
 const firebaseConfig = {
-  apiKey: "AIzaSyD6NPnDw7xruqaVnAKvxYxmX3HIgWCPjTk",
-  authDomain: "agrisense-11849.firebaseapp.com",
-  projectId: "agrisense-11849",
-  storageBucket: "agrisense-11849.firebasestorage.app",
-  messagingSenderId: "137280528526",
-  appId: "1:137280528526:android:50dd6ac7647a51a5f2e9df",
+  apiKey: "AIzaSyAETa9y1zBLsNi-DR7zwOrWBMiG-mDTOdU",
+  authDomain: "agrisense-f4c16.firebaseapp.com",
+  databaseURL: "https://agrisense-f4c16-default-rtdb.asia-southeast1.firebasedatabase.app", // CORRECT URL
+  projectId: "agrisense-f4c16",
+  storageBucket: "agrisense-f4c16.firebasestorage.app",
+  messagingSenderId: "655954688754",
+  appId: "1:655954688754:android:15f6bb92146da40a1b6e6b",
 };
 
 // Initialize Firebase
-console.log('🚀 Initializing Firebase...');
-
-const app = initializeApp(firebaseConfig);
-console.log('✅ Firebase App initialized');
-
-// Platform-specific auth initialization
-let auth;
-
+let app;
 try {
-  // Check if we're in a React Native/Expo environment
-  if (typeof navigator !== 'undefined' && navigator.product === 'ReactNative') {
-    // For React Native/Expo
-    console.log('📱 Detected React Native environment');
-    
-    // Dynamically import AsyncStorage only in native environment
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    
-    // For React Native, we need a different approach
-    // Option 1: Initialize auth without persistence for now
-    auth = initializeAuth(app);
-    console.log('✅ Firebase Auth initialized (React Native)');
-    
-    // Option 2: Try with async import
-    // const { getReactNativePersistence } = require('firebase/auth');
-    // auth = initializeAuth(app, {
-    //   persistence: getReactNativePersistence(AsyncStorage)
-    // });
-    
-  } else {
-    // For Web environment
-    console.log('🌐 Detected Web environment');
-    auth = initializeAuth(app, {
-      persistence: browserLocalPersistence
-    });
-    console.log('✅ Firebase Auth initialized (Web)');
-  }
+  app = initializeApp(firebaseConfig);
+  console.log("✅ Firebase app initialized successfully");
+  console.log("Database URL:", firebaseConfig.databaseURL);
 } catch (error) {
-  console.warn('⚠️ Could not initialize auth with persistence, using default:', error);
-  auth = initializeAuth(app);
-  console.log('✅ Firebase Auth initialized (fallback)');
+  console.error("❌ Failed to initialize Firebase:", error);
+  throw error; // Re-throw to see the error
 }
 
-// Initialize Firestore
-const db = getFirestore(app);
-console.log('✅ Firebase Firestore initialized');
+// Initialize services
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);
+export const database = getDatabase(app);
 
-// Initialize Storage
-const storage = getStorage(app);
-console.log('✅ Firebase Storage initialized');
-
-console.log('🎉 All Firebase services ready!');
-
-export { app, auth, db, storage };
-
-// Simple Firebase connection test
-export async function testFirebaseConnection(): Promise<boolean> {
-  try {
-    // Just check if auth is initialized
-    return !!auth;
-  } catch (error) {
-    console.log('⚠️ Firebase connection test failed:', error);
-    return false;
-  }
-}
+// Export the app
+export { app };
+export default app;

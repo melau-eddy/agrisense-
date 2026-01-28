@@ -1,7 +1,7 @@
 import { Groq } from 'groq-sdk';
 
 // Your actual Groq API key
-const GROQ_API_KEY = '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';
+const GROQ_API_KEY = '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';
 
 // Validate API key format
 if (!GROQ_API_KEY || GROQ_API_KEY.trim() === '' || !GROQ_API_KEY.startsWith('gsk_')) {
@@ -237,4 +237,4 @@ export async function testApiConnection(): Promise<{
       model: 'llama-3.3-70b-versatile'
     };
   }
-}
+} 
