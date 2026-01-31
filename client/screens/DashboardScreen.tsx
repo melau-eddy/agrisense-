@@ -6,6 +6,7 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -13,6 +14,7 @@ import { useNavigation, useIsFocused } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
+import { getDatabase, ref, get, onValue, off } from "firebase/database";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -21,12 +23,22 @@ import { HeaderTitle } from "@/components/HeaderTitle";
 import { useTheme } from "@/hooks/useTheme";
 import { useChat } from "@/contexts/ChatContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Spacing, BorderRadius, Colors } from "@/constants/theme";
-import { mockKPIs, mockFields, mockWeatherForecast } from "@/lib/mockData";
+import { Spacing, BorderRadius } from "@/constants/theme";
 import { subscribeToAlerts, Alert as AlertType } from "@/services/notifications/firebaseNotifications";
 import type { RootStackParamList } from "@/navigation/RootStackNavigator";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// Helper function to extract sensor data
+const extractSensorData = (data: any) => {
+  if (!data) return { soilMoisture: 0, pH: 0, temperature: 0 };
+  
+  return {
+    soilMoisture: Number(data['soil moisture'] || data.soilMoisture || 0),
+    pH: Number(data.ph || data.pH || 0),
+    temperature: Number(data.temperature || 0)
+  };
+};
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
@@ -41,7 +53,234 @@ export default function DashboardScreen() {
   const [totalAlerts, setTotalAlerts] = useState(0);
   const [isLoadingAlerts, setIsLoadingAlerts] = useState(true);
   const [alerts, setAlerts] = useState<AlertType[]>([]);
+  const [farms, setFarms] = useState<any[]>([]);
+  const [overallStats, setOverallStats] = useState({
+    totalWaterSaved: 0,
+    waterSavingsPercentage: 0,
+    yieldImprovement: 0,
+    soilHealthScore: 0,
+    co2Reduced: 0,
+    averageMoisture: 0,
+    averagePH: 0
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [weatherForecast, setWeatherForecast] = useState([
+    { day: "Today", condition: "sunny", temp: 28, rain: 10 },
+    { day: "Tue", condition: "cloudy", temp: 26, rain: 20 },
+    { day: "Wed", condition: "rain", temp: 22, rain: 80 },
+    { day: "Thu", condition: "cloudy", temp: 24, rain: 30 },
+    { day: "Fri", condition: "sunny", temp: 27, rain: 0 },
+    { day: "Sat", condition: "wind", temp: 25, rain: 10 },
+    { day: "Sun", condition: "sunny", temp: 29, rain: 5 },
+  ]);
   const [unsubscribe, setUnsubscribe] = useState<() => void>(() => () => {});
+
+  // Initialize Firebase
+  const database = getDatabase();
+
+  // Load all data from Firebase
+  const loadAllData = async () => {
+    try {
+      setIsLoading(true);
+      setIsRefreshing(true);
+      
+      const farmsArray: any[] = [];
+      let totalMoisture = 0;
+      let totalPH = 0;
+      let farmCount = 0;
+      let healthyFarms = 0;
+      
+      // 1. Load farm1-farm5 from root level
+      const rootFarmIds = ['farm1', 'farm2', 'farm3', 'farm4', 'farm5'];
+      
+      for (const farmId of rootFarmIds) {
+        const farmRef = ref(database, farmId);
+        const snapshot = await get(farmRef);
+        
+        if (snapshot.exists()) {
+          const farmData = snapshot.val();
+          const sensorData = extractSensorData(farmData);
+          
+          totalMoisture += sensorData.soilMoisture;
+          totalPH += sensorData.pH;
+          farmCount++;
+          
+          // Determine farm status based on sensor data
+          let status: 'healthy' | 'attention' | 'critical' = 'healthy';
+          if (sensorData.soilMoisture < 30 || sensorData.pH < 5 || sensorData.pH > 8) {
+            status = 'attention';
+          }
+          if (sensorData.soilMoisture < 20 || sensorData.pH < 4 || sensorData.pH > 9) {
+            status = 'critical';
+          }
+          
+          if (status === 'healthy') healthyFarms++;
+          
+          farmsArray.push({
+            id: farmId,
+            name: `Farm ${farmId.charAt(farmId.length - 1)}`,
+            acres: 0,
+            cropType: "Field Crop",
+            status,
+            moisture: sensorData.soilMoisture,
+            pH: sensorData.pH,
+            temperature: sensorData.temperature
+          });
+        }
+      }
+      
+      // 2. Load farms from the "farms" node
+      const farmsRef = ref(database, 'farms');
+      const farmsSnapshot = await get(farmsRef);
+      
+      if (farmsSnapshot.exists()) {
+        const farmsData = farmsSnapshot.val();
+        
+        Object.keys(farmsData).forEach(key => {
+          const farm = farmsData[key];
+          
+          // Skip if this farm is a duplicate of root farms (by name)
+          const isDuplicate = farmsArray.some(f => 
+            f.name.toLowerCase() === farm.name?.toLowerCase()
+          );
+          
+          if (!isDuplicate) {
+            // Extract sensor data
+            let sensorData;
+            if (farm.sensorData) {
+              sensorData = extractSensorData(farm.sensorData);
+            } else {
+              sensorData = extractSensorData(farm);
+            }
+            
+            totalMoisture += sensorData.soilMoisture;
+            totalPH += sensorData.pH;
+            farmCount++;
+            
+            // Determine status
+            let status: 'healthy' | 'attention' | 'critical' = farm.status || 'healthy';
+            if (!farm.status) {
+              if (sensorData.soilMoisture < 30 || sensorData.pH < 5 || sensorData.pH > 8) {
+                status = 'attention';
+              }
+              if (sensorData.soilMoisture < 20 || sensorData.pH < 4 || sensorData.pH > 9) {
+                status = 'critical';
+              }
+            }
+            
+            if (status === 'healthy') healthyFarms++;
+            
+            farmsArray.push({
+              id: key,
+              name: farm.name || `Farm ${key}`,
+              acres: farm.totalAcres || 0,
+              cropType: farm.cropTypes?.[0] || "Unknown",
+              status,
+              moisture: sensorData.soilMoisture,
+              pH: sensorData.pH,
+              temperature: sensorData.temperature,
+              location: farm.location,
+              soilType: farm.soilType
+            });
+          }
+        });
+      }
+      
+      // Calculate overall statistics
+      const averageMoisture = farmCount > 0 ? Math.round(totalMoisture / farmCount) : 0;
+      const averagePH = farmCount > 0 ? parseFloat((totalPH / farmCount).toFixed(1)) : 0;
+      const soilHealthScore = calculateSoilHealthScore(averageMoisture, averagePH);
+      
+      // Calculate water savings based on moisture levels
+      // (Higher moisture = less need for irrigation = more water saved)
+      const waterSavingsPercentage = calculateWaterSavings(farmsArray);
+      
+      // Calculate yield improvement based on soil health
+      const yieldImprovement = calculateYieldImprovement(soilHealthScore);
+      
+      // Calculate CO2 reduction based on water savings
+      const co2Reduced = Math.round(waterSavingsPercentage * 15); // 15kg CO2 per % water saved
+      
+      // Calculate total water saved (in liters)
+      // Assuming average farm uses 10,000L per irrigation, 2 irrigations per week
+      const totalWaterSaved = Math.round((waterSavingsPercentage / 100) * 10000 * 2 * farmsArray.length);
+      
+      setFarms(farmsArray);
+      setOverallStats({
+        totalWaterSaved,
+        waterSavingsPercentage,
+        yieldImprovement,
+        soilHealthScore,
+        co2Reduced,
+        averageMoisture,
+        averagePH
+      });
+      
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // Helper functions for calculations
+  const calculateSoilHealthScore = (moisture: number, ph: number): number => {
+    // Score based on moisture (optimal: 40-60%) and pH (optimal: 6-7)
+    let score = 0;
+    
+    // Moisture score (max 50 points)
+    if (moisture >= 40 && moisture <= 60) {
+      score += 50; // Optimal range
+    } else if (moisture >= 30 && moisture <= 70) {
+      score += 30; // Acceptable range
+    } else if (moisture >= 20 && moisture <= 80) {
+      score += 15; // Marginal range
+    } else {
+      score += 5; // Poor
+    }
+    
+    // pH score (max 50 points)
+    if (ph >= 6 && ph <= 7) {
+      score += 50; // Optimal for most crops
+    } else if (ph >= 5.5 && ph <= 7.5) {
+      score += 30; // Acceptable
+    } else if (ph >= 5 && ph <= 8) {
+      score += 15; // Marginal
+    } else {
+      score += 5; // Poor
+    }
+    
+    return Math.min(score, 100);
+  };
+
+  const calculateWaterSavings = (farms: any[]): number => {
+    if (farms.length === 0) return 0;
+    
+    // Calculate based on how many farms have optimal moisture (40-60%)
+    // This reduces need for irrigation
+    const optimalFarms = farms.filter(farm => farm.moisture >= 40 && farm.moisture <= 60).length;
+    const savingsPercentage = (optimalFarms / farms.length) * 25; // Max 25% savings
+    
+    return Math.round(savingsPercentage);
+  };
+
+  const calculateYieldImprovement = (soilHealthScore: number): number => {
+    // Yield improvement correlates with soil health
+    // Perfect soil health (100) = 20% improvement
+    return Math.round((soilHealthScore / 100) * 20);
+  };
+
+  useEffect(() => {
+    if (isFocused) {
+      loadAllData();
+    }
+    
+    return () => {
+      // Clean up any listeners
+    };
+  }, [isFocused]);
 
   useEffect(() => {
     if (!user?.uid || !isFocused) return;
@@ -80,6 +319,11 @@ export default function DashboardScreen() {
       }
     }
   }, [isFocused]);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    loadAllData();
+  };
 
   const getWeatherIcon = (condition: string): keyof typeof Feather.glyphMap => {
     switch (condition) {
@@ -144,6 +388,28 @@ export default function DashboardScreen() {
 
   const recentAlert = getRecentAlert();
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'healthy': return theme.success;
+      case 'attention': return theme.warning;
+      case 'critical': return theme.critical;
+      default: return theme.textSecondary;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={[styles.loadingContainer, { paddingTop: insets.top + 100 }]}>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <ThemedText style={[styles.loadingText, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
+            Loading farm data...
+          </ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
+
   return (
     <ThemedView style={styles.container}>
       <ScrollView
@@ -156,6 +422,13 @@ export default function DashboardScreen() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={theme.primary}
+          />
+        }
       >
         <View style={styles.header}>
           <HeaderTitle title="AgriSense" />
@@ -173,7 +446,7 @@ export default function DashboardScreen() {
                     <View
                       style={[
                         styles.badge,
-                        { backgroundColor: isDark ? Colors.dark.critical : Colors.light.critical },
+                        { backgroundColor: theme.critical },
                       ]}
                     >
                       <ThemedText style={styles.badgeText}>
@@ -202,14 +475,14 @@ export default function DashboardScreen() {
               styles.alertBanner,
               { 
                 backgroundColor: recentAlert.type === 'critical' 
-                  ? (isDark ? Colors.dark.critical : Colors.light.critical) + '15'
+                  ? `${theme.critical}15`
                   : recentAlert.type === 'warning'
-                    ? (isDark ? Colors.dark.warning : Colors.light.warning) + '15'
+                    ? `${theme.warning}15`
                     : theme.backgroundSecondary,
                 borderColor: recentAlert.type === 'critical' 
-                  ? isDark ? Colors.dark.critical : Colors.light.critical
+                  ? theme.critical
                   : recentAlert.type === 'warning'
-                    ? isDark ? Colors.dark.warning : Colors.light.warning
+                    ? theme.warning
                     : theme.border,
               }
             ]}
@@ -221,9 +494,9 @@ export default function DashboardScreen() {
                   name={recentAlert.type === 'critical' ? "alert-triangle" : "bell"} 
                   size={20} 
                   color={recentAlert.type === 'critical' 
-                    ? isDark ? Colors.dark.critical : Colors.light.critical
+                    ? theme.critical
                     : recentAlert.type === 'warning'
-                      ? isDark ? Colors.dark.warning : Colors.light.warning
+                      ? theme.warning
                       : theme.text
                   } 
                 />
@@ -232,9 +505,9 @@ export default function DashboardScreen() {
                     styles.alertBannerTitle,
                     { 
                       color: recentAlert.type === 'critical' 
-                        ? isDark ? Colors.dark.critical : Colors.light.critical
+                        ? theme.critical
                         : recentAlert.type === 'warning'
-                          ? isDark ? Colors.dark.warning : Colors.light.warning
+                          ? theme.warning
                           : theme.text
                     }
                   ]}>
@@ -258,8 +531,8 @@ export default function DashboardScreen() {
           style={[
             styles.aiAssistantCard,
             { 
-              backgroundColor: isDark ? Colors.dark.primary : Colors.light.primary,
-              borderColor: isDark ? Colors.dark.primaryVariant : Colors.light.primaryVariant,
+              backgroundColor: theme.primary,
+              borderColor: theme.primaryVariant || theme.primary,
             }
           ]}
           onPress={handleAIChatPress}
@@ -294,40 +567,40 @@ export default function DashboardScreen() {
           <View style={styles.kpiGrid}>
             <KPICard
               title="Water Savings"
-              value={mockKPIs.waterSavings}
+              value={overallStats.waterSavingsPercentage}
               unit="%"
               icon="droplet"
-              color={isDark ? Colors.dark.accent : Colors.light.accent}
+              color={theme.accent}
               trend="up"
-              trendValue="+5% this week"
+              trendValue="Based on sensor data"
               onPress={() => handleQuickAction("irrigation")}
             />
             <KPICard
               title="Yield Improvement"
-              value={mockKPIs.yieldImprovement}
+              value={overallStats.yieldImprovement}
               unit="%"
               icon="trending-up"
-              color={isDark ? Colors.dark.success : Colors.light.success}
+              color={theme.success}
               trend="up"
-              trendValue="+3% vs last season"
+              trendValue="Estimated from soil health"
             />
           </View>
           <View style={styles.kpiGrid}>
             <KPICard
               title="Soil Health"
-              value={mockKPIs.soilHealthScore}
+              value={overallStats.soilHealthScore}
               unit="/100"
               icon="activity"
-              color={isDark ? Colors.dark.primary : Colors.light.primary}
+              color={theme.primary}
               trend="neutral"
-              trendValue="Stable"
+              trendValue={`Avg moisture: ${overallStats.averageMoisture}%`}
               onPress={() => handleQuickAction("soil")}
             />
             <KPICard
               title="Active Alerts"
               value={getCriticalAlertsCount()}
               icon="alert-triangle"
-              color={isDark ? Colors.dark.critical : Colors.light.critical}
+              color={theme.critical}
               trend={getCriticalAlertsCount() > 0 ? "up" : "neutral"}
               trendValue={getCriticalAlertsCount() > 0 ? "Needs attention" : "All clear"}
               onPress={() => handleQuickAction("notifications")}
@@ -344,8 +617,8 @@ export default function DashboardScreen() {
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
               onPress={() => handleQuickAction("irrigation")}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.accent : Colors.light.accent}15` }]}>
-                <Feather name="droplet" size={24} color={isDark ? Colors.dark.accent : Colors.light.accent} />
+              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.accent}15` }]}>
+                <Feather name="droplet" size={24} color={theme.accent} />
               </View>
               <ThemedText style={styles.quickActionText}>Irrigation Control</ThemedText>
             </Pressable>
@@ -354,8 +627,8 @@ export default function DashboardScreen() {
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
               onPress={() => handleQuickAction("ai")}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.primary : Colors.light.primary}15` }]}>
-                <Feather name="cpu" size={24} color={isDark ? Colors.dark.primary : Colors.light.primary} />
+              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.primary}15` }]}>
+                <Feather name="cpu" size={24} color={theme.primary} />
               </View>
               <ThemedText style={styles.quickActionText}>AI Assistant</ThemedText>
             </Pressable>
@@ -364,8 +637,8 @@ export default function DashboardScreen() {
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
               onPress={() => handleQuickAction("weather")}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.warning : Colors.light.warning}15` }]}>
-                <Feather name="cloud" size={24} color={isDark ? Colors.dark.warning : Colors.light.warning} />
+              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.warning}15` }]}>
+                <Feather name="cloud" size={24} color={theme.warning} />
               </View>
               <ThemedText style={styles.quickActionText}>Weather</ThemedText>
             </Pressable>
@@ -374,8 +647,8 @@ export default function DashboardScreen() {
               style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
               onPress={() => handleQuickAction("notifications")}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${isDark ? Colors.dark.critical : Colors.light.critical}15` }]}>
-                <Feather name="bell" size={24} color={isDark ? Colors.dark.critical : Colors.light.critical} />
+              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.critical}15` }]}>
+                <Feather name="bell" size={24} color={theme.critical} />
               </View>
               <ThemedText style={styles.quickActionText}>
                 {unreadCount > 0 ? `Alerts (${unreadCount})` : 'Notifications'}
@@ -399,17 +672,17 @@ export default function DashboardScreen() {
                 <View
                   style={[
                     styles.impactIcon,
-                    { backgroundColor: `${isDark ? Colors.dark.accent : Colors.light.accent}15` },
+                    { backgroundColor: `${theme.accent}15` },
                   ]}
                 >
                   <Feather
                     name="droplet"
                     size={24}
-                    color={isDark ? Colors.dark.accent : Colors.light.accent}
+                    color={theme.accent}
                   />
                 </View>
                 <ThemedText type="h2" style={styles.impactValue}>
-                  {(mockKPIs.totalWaterSaved / 1000).toFixed(0)}K
+                  {(overallStats.totalWaterSaved / 1000).toFixed(0)}K
                 </ThemedText>
                 <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
                   Liters Saved
@@ -420,17 +693,17 @@ export default function DashboardScreen() {
                 <View
                   style={[
                     styles.impactIcon,
-                    { backgroundColor: `${isDark ? Colors.dark.success : Colors.light.success}15` },
+                    { backgroundColor: `${theme.success}15` },
                   ]}
                 >
                   <Feather
                     name="wind"
                     size={24}
-                    color={isDark ? Colors.dark.success : Colors.light.success}
+                    color={theme.success}
                   />
                 </View>
                 <ThemedText type="h2" style={styles.impactValue}>
-                  {mockKPIs.co2Reduced}
+                  {overallStats.co2Reduced}
                 </ThemedText>
                 <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
                   kg CO2 Reduced
@@ -456,14 +729,14 @@ export default function DashboardScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.weatherScroll}
           >
-            {mockWeatherForecast.map((day, index) => (
+            {weatherForecast.map((day, index) => (
               <View
                 key={index}
                 style={[
                   styles.weatherCard,
                   { backgroundColor: theme.cardBackground, borderColor: theme.border },
                   index === 0 && {
-                    backgroundColor: isDark ? Colors.dark.primary : Colors.light.primary,
+                    backgroundColor: theme.primary,
                     borderColor: "transparent",
                   },
                 ]}
@@ -491,18 +764,13 @@ export default function DashboardScreen() {
                     <Feather
                       name="droplet"
                       size={10}
-                      color={index === 0 ? "#FFFFFF" : isDark ? Colors.dark.accent : Colors.light.accent}
+                      color={index === 0 ? "#FFFFFF" : theme.accent}
                     />
                     <ThemedText
                       style={[
                         styles.rainText,
                         {
-                          color:
-                            index === 0
-                              ? "#FFFFFF"
-                              : isDark
-                                ? Colors.dark.accent
-                                : Colors.light.accent,
+                          color: index === 0 ? "#FFFFFF" : theme.accent,
                         },
                       ]}
                     >
@@ -518,9 +786,9 @@ export default function DashboardScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <ThemedText type="h3" style={styles.sectionTitle}>
-              Field Status
+              Field Status ({farms.length} farms)
             </ThemedText>
-            <Pressable onPress={() => Alert.alert("Fields", "All fields view will be available soon")}>
+            <Pressable onPress={() => navigation.navigate("Farms")}>
               <ThemedText type="link" style={{ color: theme.link }}>
                 View All Fields
               </ThemedText>
@@ -532,10 +800,10 @@ export default function DashboardScreen() {
               { backgroundColor: theme.cardBackground, borderColor: theme.border },
             ]}
           >
-            {mockFields.slice(0, 3).map((field, index) => (
+            {farms.slice(0, 3).map((field, index) => (
               <Pressable
                 key={field.id}
-                onPress={() => Alert.alert("Field Details", `Details for ${field.name}`)}
+                onPress={() => navigation.navigate("Farms")}
                 style={[
                   styles.summaryRow,
                   index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
@@ -546,25 +814,14 @@ export default function DashboardScreen() {
                     style={[
                       styles.statusIndicator,
                       {
-                        backgroundColor:
-                          field.status === "healthy"
-                            ? isDark
-                              ? Colors.dark.success
-                              : Colors.light.success
-                            : field.status === "attention"
-                              ? isDark
-                                ? Colors.dark.warning
-                                : Colors.light.warning
-                              : isDark
-                                ? Colors.dark.critical
-                                : Colors.light.critical,
+                        backgroundColor: getStatusColor(field.status),
                       },
                     ]}
                   />
                   <View>
                     <ThemedText style={styles.summaryName}>{field.name}</ThemedText>
                     <ThemedText style={[styles.summaryAcres, { color: theme.textSecondary }]}>
-                      {field.acres} acres • {field.cropType}
+                      {field.acres > 0 ? `${field.acres} acres` : 'Unknown size'} • {field.cropType}
                     </ThemedText>
                   </View>
                 </View>
@@ -573,7 +830,7 @@ export default function DashboardScreen() {
                     <Feather
                       name="droplet"
                       size={14}
-                      color={isDark ? Colors.dark.accent : Colors.light.accent}
+                      color={theme.accent}
                     />
                     <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
                   </View>
@@ -581,6 +838,15 @@ export default function DashboardScreen() {
                 </View>
               </Pressable>
             ))}
+            
+            {farms.length === 0 && (
+              <View style={styles.noData}>
+                <Feather name="map" size={24} color={theme.textSecondary} />
+                <ThemedText style={[styles.noDataText, { color: theme.textSecondary }]}>
+                  No farms found. Add your first farm!
+                </ThemedText>
+              </View>
+            )}
           </View>
         </View>
 
@@ -608,11 +874,11 @@ export default function DashboardScreen() {
                     styles.activityIcon,
                     { 
                       backgroundColor: alert.type === 'critical' 
-                        ? `${Colors.light.critical}15`
+                        ? `${theme.critical}15`
                         : alert.type === 'warning'
-                          ? `${Colors.light.warning}15`
+                          ? `${theme.warning}15`
                           : alert.type === 'success'
-                            ? `${Colors.light.success}15`
+                            ? `${theme.success}15`
                             : `${theme.primary}15`
                     }
                   ]}>
@@ -624,9 +890,9 @@ export default function DashboardScreen() {
                       } 
                       size={16} 
                       color={
-                        alert.type === 'critical' ? Colors.light.critical :
-                        alert.type === 'warning' ? Colors.light.warning :
-                        alert.type === 'success' ? Colors.light.success : theme.primary
+                        alert.type === 'critical' ? theme.critical :
+                        alert.type === 'warning' ? theme.warning :
+                        alert.type === 'success' ? theme.success : theme.primary
                       } 
                     />
                   </View>
@@ -684,6 +950,14 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: Spacing.lg,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    fontSize: 14,
   },
   header: {
     flexDirection: "row",
@@ -925,6 +1199,15 @@ const styles = StyleSheet.create({
   summaryMoisture: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  noData: {
+    alignItems: "center",
+    padding: Spacing.xl,
+    gap: Spacing.md,
+  },
+  noDataText: {
+    fontSize: 14,
+    textAlign: "center",
   },
   activityCard: {
     borderRadius: BorderRadius.lg,
