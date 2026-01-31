@@ -5,7 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
-import { Alert, Platform, View, Text } from 'react-native';
+import { Alert, Platform, View, Text, TouchableOpacity } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { ChatProvider } from '@/contexts/ChatContext';
@@ -62,15 +62,14 @@ function TabBarIcon({
   badgeCount?: number;
 }) {
   return (
-    <div style={{ 
+    <View style={{ 
       position: 'relative',
-      display: 'flex',
       alignItems: 'center',
       justifyContent: 'center'
     }}>
       <Feather name={name} size={size} color={color} />
       {showBadge && (
-        <div style={{
+        <View style={{
           position: 'absolute',
           top: -6,
           right: -6,
@@ -78,26 +77,23 @@ function TabBarIcon({
           borderRadius: 9,
           minWidth: 18,
           height: 18,
-          display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          padding: '0 4px',
+          paddingHorizontal: 4,
           borderWidth: 2,
-          borderStyle: 'solid',
           borderColor: '#FFFFFF',
-          zIndex: 10,
         }}>
-          <span style={{
+          <Text style={{
             color: '#FFFFFF',
             fontSize: 10,
             fontWeight: 'bold',
-            lineHeight: 1,
+            lineHeight: 12,
           }}>
             {badgeCount && badgeCount > 99 ? '99+' : badgeCount}
-          </span>
-        </div>
+          </Text>
+        </View>
       )}
-    </div>
+    </View>
   );
 }
 
@@ -105,6 +101,14 @@ function MainTabs() {
   const { theme } = useTheme();
   const { unreadCount } = useNotifications();
   const { isDesktop, isWeb } = useResponsive();
+
+  // Debug log
+  console.log('MainTabs debug:', { 
+    isWeb, 
+    isDesktop, 
+    Platform: Platform.OS,
+    tabBarVisible: true 
+  });
 
   return (
     <Tab.Navigator
@@ -223,13 +227,12 @@ function AppNavigator() {
     return (
       <SafeAreaProvider>
         <StatusBar style="auto" />
-        <div style={{ 
+        <View style={{ 
           flex: 1, 
           backgroundColor: '#F8F9FA',
-          display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          ...(isWeb && {
+          ...(Platform.OS === 'web' && {
             minHeight: '100vh',
             width: '100%',
             position: 'fixed',
@@ -239,37 +242,31 @@ function AppNavigator() {
             bottom: 0,
           })
         }}>
-          <div style={{
+          <View style={{
             width: 40,
             height: 40,
-            border: `4px solid #2D7A4F`,
+            borderWidth: 4,
+            borderColor: '#2D7A4F',
             borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
+            borderRadius: 20,
             marginBottom: 16
           }} />
-          <div style={{
+          <Text style={{
             color: '#6B7280',
             fontSize: 16,
-            fontWeight: 500,
+            fontWeight: '500',
             textAlign: 'center',
           }}>
             Loading AgriSense...
-          </div>
-          <style>{`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}</style>
-        </div>
+          </Text>
+        </View>
       </SafeAreaProvider>
     );
   }
 
   return (
     <Stack.Navigator 
-      key={user ? 'authenticated' : 'unauthenticated'} // ← THIS IS THE KEY FIX
+      key={user ? 'authenticated' : 'unauthenticated'}
       screenOptions={{ 
         headerShown: false,
         contentStyle: {
@@ -389,32 +386,19 @@ function AppNavigator() {
 
 // Main App component
 export default function App() {
-  const { isWeb } = useResponsive();
-  
   return (
     <SafeAreaProvider>
       <AuthProvider>
-      <FarmProvider> {/* Add this */}
-        <ChatProvider>
-          <NotificationsProvider>
-            <NavigationContainer>
-              {isWeb && (
-                <div style={{
-                  width: '100%',
-                  minHeight: '100vh',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  backgroundColor: '#F8F9FA',
-                }}>
-                  <AppNavigator />
-                </div>
-              )}
-              {!isWeb && <AppNavigator />}
-              <StatusBar style="auto" />
-            </NavigationContainer>
-          </NotificationsProvider>
-        </ChatProvider>
-        </FarmProvider> {/* Add this */}
+        <FarmProvider>
+          <ChatProvider>
+            <NotificationsProvider>
+              <NavigationContainer>
+                <AppNavigator />
+                <StatusBar style="auto" />
+              </NavigationContainer>
+            </NotificationsProvider>
+          </ChatProvider>
+        </FarmProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
