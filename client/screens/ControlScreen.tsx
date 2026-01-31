@@ -85,6 +85,20 @@ interface IrrigationSettings {
 
 const IRRIGATION_SETTINGS_KEY = '@agrisense_irrigation_settings';
 
+// Helper function to extract sensor data from any object structure
+const extractSensorData = (data: any) => {
+  if (!data) return { soilMoisture: 0, pH: 0, temperature: 0, nitrogen: 0, phosphorus: 0, potassium: 0 };
+  
+  return {
+    soilMoisture: Number(data['soil moisture'] || data.soilMoisture || 0),
+    pH: Number(data.ph || data.pH || 0),
+    temperature: Number(data.temperature || 0),
+    nitrogen: Number(data.nitrogen || 0),
+    phosphorus: Number(data.phosphorus || 0),
+    potassium: Number(data.potassium || 0)
+  };
+};
+
 export default function ControlScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
@@ -143,11 +157,16 @@ export default function ControlScreen() {
     
     const unsubscribe = onValue(sensorRef, (snapshot) => {
       const data = snapshot.val();
+      console.log(`Real-time update for ${selectedFarm.id}:`, data);
+      
       if (data) {
+        const sensorData = extractSensorData(data);
+        console.log(`Parsed sensor data for ${selectedFarm.id}:`, sensorData);
+        
         setRealTimeSensorData({
-          soilMoisture: data['soil moisture'] || data.soilMoisture || 0,
-          pH: data.ph || data.pH || 0,
-          temperature: data.temperature || 0
+          soilMoisture: sensorData.soilMoisture,
+          pH: sensorData.pH,
+          temperature: sensorData.temperature
         });
         
         // Update the farm in the list with latest sensor data
@@ -157,12 +176,7 @@ export default function ControlScreen() {
               ? { 
                   ...farm, 
                   sensorData: {
-                    soilMoisture: data['soil moisture'] || data.soilMoisture || 0,
-                    pH: data.ph || data.pH || 0,
-                    temperature: data.temperature || 0,
-                    nitrogen: data.nitrogen || 0,
-                    phosphorus: data.phosphorus || 0,
-                    potassium: data.potassium || 0,
+                    ...sensorData,
                     lastUpdated: new Date().toISOString()
                   }
                 } 
@@ -170,6 +184,8 @@ export default function ControlScreen() {
           )
         );
       }
+    }, (error) => {
+      console.error(`Error listening to ${selectedFarm.id}:`, error);
     });
     
     return () => {
@@ -214,24 +230,26 @@ export default function ControlScreen() {
         
         if (snapshot.exists()) {
           const farmData = snapshot.val();
+          const sensorData = extractSensorData(farmData);
+          
+          console.log(`Loaded ${farmId}:`, {
+            rawData: farmData,
+            parsedSensorData: sensorData
+          });
+          
           const farm: Farm = {
             id: farmId,
-            name: `Farm ${farmId.charAt(farmId.length - 1)}`, // "Farm 1", "Farm 2", etc.
-            location: "Field Location", // Default since we don't have this data
-            totalAcres: 0, // Unknown from sensor data
-            cropTypes: ["Unknown Crop"], // Default
-            soilType: "Unknown", // Default
-            irrigationType: "Drip Irrigation", // Default for these farms
+            name: `Farm ${farmId.charAt(farmId.length - 1)}`,
+            location: "Field Location",
+            totalAcres: 0,
+            cropTypes: ["Field Crop"],
+            soilType: "Unknown",
+            irrigationType: "Drip Irrigation",
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            status: 'healthy', // Default status
+            status: 'healthy',
             sensorData: {
-              soilMoisture: farmData['soil moisture'] || farmData.soilMoisture || 0,
-              pH: farmData.ph || farmData.pH || 0,
-              temperature: farmData.temperature || 0,
-              nitrogen: 0,
-              phosphorus: 0,
-              potassium: 0,
+              ...sensorData,
               lastUpdated: new Date().toISOString()
             }
           };
@@ -255,33 +273,46 @@ export default function ControlScreen() {
           );
           
           if (!isDuplicate) {
+            // Extract sensor data - check both sensorData object and direct properties
+            let sensorData;
+            if (farm.sensorData) {
+              sensorData = extractSensorData(farm.sensorData);
+            } else {
+              // Check if sensor data is stored directly on the farm object
+              sensorData = extractSensorData(farm);
+            }
+            
             farmsArray.push({
               id: key,
               name: farm.name || `Farm ${key}`,
-              location: farm.location || "Unknown location",
+              location: farm.location || "",
               totalAcres: farm.totalAcres || 0,
-              cropTypes: farm.cropTypes || ["Other"],
-              soilType: farm.soilType || "Unknown",
+              cropTypes: farm.cropTypes || [],
+              soilType: farm.soilType || "",
               irrigationType: farm.irrigationType || "Manual",
               description: farm.description,
               coordinates: farm.coordinates,
               createdAt: farm.createdAt || new Date().toISOString(),
               updatedAt: farm.updatedAt || new Date().toISOString(),
               status: farm.status || "healthy",
-              sensorData: farm.sensorData || {
-                soilMoisture: 0,
-                pH: 0,
-                temperature: 0,
-                nitrogen: 0,
-                phosphorus: 0,
-                potassium: 0,
-                lastUpdated: new Date().toISOString()
+              sensorData: {
+                ...sensorData,
+                lastUpdated: farm.lastUpdated || new Date().toISOString()
               },
               irrigationSchedule: farm.irrigationSchedule
             });
           }
         });
       }
+      
+      // Debug log to see all loaded farms
+      console.log('All loaded farms:', farmsArray.map(f => ({
+        id: f.id,
+        name: f.name,
+        soilMoisture: f.sensorData?.soilMoisture,
+        pH: f.sensorData?.pH,
+        temperature: f.sensorData?.temperature
+      })));
       
       // Sort farms by name
       farmsArray.sort((a, b) => a.name.localeCompare(b.name));
@@ -702,16 +733,14 @@ export default function ControlScreen() {
                       {selectedFarm?.status.toUpperCase() || "HEALTHY"}
                     </ThemedText>
                   </View>
-                  {selectedFarm && (
+                  {selectedFarm && selectedFarm.sensorData && (
                     <View style={styles.farmDetails}>
-                      {selectedFarm.sensorData?.soilMoisture !== undefined && (
-                        <View style={styles.farmDetail}>
-                          <Feather name="droplet" size={12} color={theme.textSecondary} />
-                          <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
-                            {selectedFarm.sensorData.soilMoisture}% moisture
-                          </ThemedText>
-                        </View>
-                      )}
+                      <View style={styles.farmDetail}>
+                        <Feather name="droplet" size={12} color={theme.textSecondary} />
+                        <ThemedText style={[styles.farmDetailText, { color: theme.textSecondary }]}>
+                          {selectedFarm.sensorData.soilMoisture}% moisture
+                        </ThemedText>
+                      </View>
                       {selectedFarm.totalAcres > 0 && (
                         <View style={styles.farmDetail}>
                           <Feather name="maximize" size={12} color={theme.textSecondary} />
@@ -740,6 +769,8 @@ export default function ControlScreen() {
                 >
                   {farms.map((farm) => {
                     const farmStatus = calculateFarmStatus(farm);
+                    const hasSensorData = farm.sensorData && (farm.sensorData.soilMoisture > 0 || farm.sensorData.pH > 0);
+                    
                     return (
                       <Pressable
                         key={farm.id}
@@ -779,7 +810,7 @@ export default function ControlScreen() {
                           <View style={styles.farmOptionInfo}>
                             <ThemedText style={styles.farmOptionName}>{farm.name}</ThemedText>
                             <ThemedText style={[styles.farmOptionDetails, { color: theme.textSecondary }]}>
-                              {farm.cropTypes.length > 0 ? farm.cropTypes[0] : "No crop type"} • {farm.sensorData?.soilMoisture || 0}% moisture
+                              {farm.cropTypes.length > 0 ? farm.cropTypes[0] : "Field"} • {farm.sensorData?.soilMoisture || 0}% moisture
                             </ThemedText>
                           </View>
                         </View>
@@ -788,6 +819,13 @@ export default function ControlScreen() {
                             <View style={[styles.sensorOnlyBadge, { backgroundColor: `${theme.accent}15` }]}>
                               <ThemedText style={[styles.sensorOnlyText, { color: theme.accent }]}>
                                 Sensor
+                              </ThemedText>
+                            </View>
+                          )}
+                          {!hasSensorData && !farm.id.startsWith('farm') && (
+                            <View style={[styles.noDataBadge, { backgroundColor: `${theme.warning}15` }]}>
+                              <ThemedText style={[styles.noDataText, { color: theme.warning }]}>
+                                No Data
                               </ThemedText>
                             </View>
                           )}
@@ -874,13 +912,13 @@ export default function ControlScreen() {
               <ThemedText style={[styles.sensorNote, { color: theme.textSecondary }]}>
                 {selectedFarm.id.startsWith('farm') 
                   ? "Real-time data from field sensors" 
-                  : "Updated in real-time from your farm sensors"}
+                  : "Updated from farm sensors"}
               </ThemedText>
             </View>
           </View>
         )}
 
-        {/* Irrigation Controls */}
+        {/* Irrigation Controls - Only show for farms that support irrigation */}
         {selectedFarm && !selectedFarm.id.startsWith('farm') && (
           <>
             {/* Mode Selection */}
@@ -1523,6 +1561,15 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.xs,
   },
   sensorOnlyText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  noDataBadge: {
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.xs,
+  },
+  noDataText: {
     fontSize: 10,
     fontWeight: '600',
   },
