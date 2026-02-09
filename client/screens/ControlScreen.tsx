@@ -9,7 +9,8 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  TouchableOpacity
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -26,13 +27,15 @@ import {
   update, 
   push, 
   onValue, 
-  off
+  off,
+  remove
 } from "firebase/database";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
+import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
 
 type RootStackParamList = {
@@ -57,6 +60,7 @@ interface Farm {
   description?: string;
   createdAt: string;
   updatedAt: string;
+  userId: string;
   status: 'healthy' | 'attention' | 'critical';
   sensorData?: {
     soilMoisture: number;
@@ -104,6 +108,7 @@ export default function ControlScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const { theme } = useTheme();
+  const { user } = useAuth();
 
   // State
   const [farms, setFarms] = useState<Farm[]>([]);
@@ -134,34 +139,32 @@ export default function ControlScreen() {
   // Load farms and settings
   useEffect(() => {
     loadSettings();
-    loadAllFarms();
+    loadUserFarms();
     
     return () => {
       // Clean up any listeners
     };
-  }, []);
+  }, [user]);
 
   // Listen to real-time sensor data
   useEffect(() => {
     if (!selectedFarm) return;
     
-    // Listen to sensor data from the correct location based on farm ID
+    // Listen to sensor data from the correct location
     let sensorRef;
     if (selectedFarm.id.startsWith('farm')) {
       // For farm1-farm5, listen at root level
       sensorRef = ref(database, `${selectedFarm.id}`);
     } else {
-      // For farms in the "farms" node
+      // For user-added farms in the "farms" node
       sensorRef = ref(database, `farms/${selectedFarm.id}/sensorData`);
     }
     
     const unsubscribe = onValue(sensorRef, (snapshot) => {
       const data = snapshot.val();
-      console.log(`Real-time update for ${selectedFarm.id}:`, data);
       
       if (data) {
         const sensorData = extractSensorData(data);
-        console.log(`Parsed sensor data for ${selectedFarm.id}:`, sensorData);
         
         setRealTimeSensorData({
           soilMoisture: sensorData.soilMoisture,
@@ -202,7 +205,7 @@ export default function ControlScreen() {
         setScheduleTime(settings.scheduleTime);
         setDuration(settings.duration);
         
-        // Try to find and select the saved farm
+        // Try to find and select the saved farm (only if it belongs to current user)
         if (settings.selectedFarmId && farms.length > 0) {
           const savedFarm = farms.find(farm => farm.id === settings.selectedFarmId);
           if (savedFarm) {
@@ -215,49 +218,21 @@ export default function ControlScreen() {
     }
   };
 
-  const loadAllFarms = async () => {
+  const loadUserFarms = async () => {
+    if (!user) {
+      setFarms([]);
+      setSelectedFarm(null);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
+      setIsRefreshing(true);
       
       const farmsArray: Farm[] = [];
       
-      // 1. Load farm1-farm5 from root level
-      const rootFarmIds = ['farm1', 'farm2', 'farm3', 'farm4', 'farm5'];
-      
-      for (const farmId of rootFarmIds) {
-        const farmRef = ref(database, farmId);
-        const snapshot = await get(farmRef);
-        
-        if (snapshot.exists()) {
-          const farmData = snapshot.val();
-          const sensorData = extractSensorData(farmData);
-          
-          console.log(`Loaded ${farmId}:`, {
-            rawData: farmData,
-            parsedSensorData: sensorData
-          });
-          
-          const farm: Farm = {
-            id: farmId,
-            name: `Farm ${farmId.charAt(farmId.length - 1)}`,
-            location: "Field Location",
-            totalAcres: 0,
-            cropTypes: ["Field Crop"],
-            soilType: "Unknown",
-            irrigationType: "Drip Irrigation",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            status: 'healthy',
-            sensorData: {
-              ...sensorData,
-              lastUpdated: new Date().toISOString()
-            }
-          };
-          farmsArray.push(farm);
-        }
-      }
-      
-      // 2. Load farms from the "farms" node
+      // Load only farms that belong to the current user from the "farms" node
       const farmsRef = ref(database, 'farms');
       const farmsSnapshot = await get(farmsRef);
       
@@ -267,52 +242,40 @@ export default function ControlScreen() {
         Object.keys(farmsData).forEach(key => {
           const farm = farmsData[key];
           
-          // Skip if this farm is a duplicate of root farms (by name)
-          const isDuplicate = farmsArray.some(f => 
-            f.name.toLowerCase() === farm.name?.toLowerCase()
-          );
+          // Only include farms that belong to the current user
+          if (farm.userId !== user.uid) return;
           
-          if (!isDuplicate) {
-            // Extract sensor data - check both sensorData object and direct properties
-            let sensorData;
-            if (farm.sensorData) {
-              sensorData = extractSensorData(farm.sensorData);
-            } else {
-              // Check if sensor data is stored directly on the farm object
-              sensorData = extractSensorData(farm);
-            }
-            
-            farmsArray.push({
-              id: key,
-              name: farm.name || `Farm ${key}`,
-              location: farm.location || "",
-              totalAcres: farm.totalAcres || 0,
-              cropTypes: farm.cropTypes || [],
-              soilType: farm.soilType || "",
-              irrigationType: farm.irrigationType || "Manual",
-              description: farm.description,
-              coordinates: farm.coordinates,
-              createdAt: farm.createdAt || new Date().toISOString(),
-              updatedAt: farm.updatedAt || new Date().toISOString(),
-              status: farm.status || "healthy",
-              sensorData: {
-                ...sensorData,
-                lastUpdated: farm.lastUpdated || new Date().toISOString()
-              },
-              irrigationSchedule: farm.irrigationSchedule
-            });
+          // Extract sensor data - check both sensorData object and direct properties
+          let sensorData;
+          if (farm.sensorData) {
+            sensorData = extractSensorData(farm.sensorData);
+          } else {
+            // Check if sensor data is stored directly on the farm object
+            sensorData = extractSensorData(farm);
           }
+          
+          farmsArray.push({
+            id: key,
+            name: farm.name || `Farm ${key}`,
+            location: farm.location || "",
+            totalAcres: farm.totalAcres || 0,
+            cropTypes: farm.cropTypes || [],
+            soilType: farm.soilType || "",
+            irrigationType: farm.irrigationType || "Manual",
+            description: farm.description,
+            coordinates: farm.coordinates,
+            createdAt: farm.createdAt || new Date().toISOString(),
+            updatedAt: farm.updatedAt || new Date().toISOString(),
+            userId: farm.userId,
+            status: farm.status || "healthy",
+            sensorData: {
+              ...sensorData,
+              lastUpdated: farm.lastUpdated || new Date().toISOString()
+            },
+            irrigationSchedule: farm.irrigationSchedule
+          });
         });
       }
-      
-      // Debug log to see all loaded farms
-      console.log('All loaded farms:', farmsArray.map(f => ({
-        id: f.id,
-        name: f.name,
-        soilMoisture: f.sensorData?.soilMoisture,
-        pH: f.sensorData?.pH,
-        temperature: f.sensorData?.temperature
-      })));
       
       // Sort farms by name
       farmsArray.sort((a, b) => a.name.localeCompare(b.name));
@@ -351,7 +314,51 @@ export default function ControlScreen() {
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    loadAllFarms();
+    loadUserFarms();
+  };
+
+  const handleDeleteFarm = async (farm: Farm) => {
+    Alert.alert(
+      "Delete Farm",
+      `Are you sure you want to delete "${farm.name}"? This action cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsLoading(true);
+              
+              const farmRef = ref(database, `farms/${farm.id}`);
+              await remove(farmRef);
+              
+              // Update local state
+              setFarms(prev => prev.filter(f => f.id !== farm.id));
+              
+              // If the deleted farm was selected, select another one or clear selection
+              if (selectedFarm?.id === farm.id) {
+                const remainingFarms = farms.filter(f => f.id !== farm.id);
+                if (remainingFarms.length > 0) {
+                  setSelectedFarm(remainingFarms[0]);
+                } else {
+                  setSelectedFarm(null);
+                }
+              }
+              
+              triggerHaptic('success');
+              Alert.alert("✅ Farm Deleted", `Farm "${farm.name}" has been deleted successfully.`);
+              
+            } catch (error) {
+              console.error('Error deleting farm:', error);
+              Alert.alert("❌ Error", "Failed to delete farm. Please try again.");
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const saveSettings = async () => {
@@ -367,7 +374,7 @@ export default function ControlScreen() {
       };
       await AsyncStorage.setItem(IRRIGATION_SETTINGS_KEY, JSON.stringify(settings));
       
-      // Save to farm in database (only for farms in the "farms" node)
+      // Save to farm in database (only for user-added farms)
       if (!selectedFarm.id.startsWith('farm')) {
         const farmRef = ref(database, `farms/${selectedFarm.id}/irrigationSchedule`);
         await set(farmRef, {
@@ -415,11 +422,11 @@ export default function ControlScreen() {
       return;
     }
 
-    // For farm1-farm5, we can't save schedules at root level
+    // For demo farms, we can't save schedules at root level
     if (selectedFarm.id.startsWith('farm')) {
       Alert.alert(
         "Schedule Saved Locally",
-        `Irrigation schedule saved for ${selectedFarm.name}. Note: This schedule is saved locally as this farm uses sensor-only mode.`,
+        `Irrigation schedule saved for ${selectedFarm.name}. Note: This schedule is saved locally as this is a demo farm.`,
         [{ text: "OK", style: "default" }]
       );
       return;
@@ -428,7 +435,7 @@ export default function ControlScreen() {
     try {
       triggerHaptic('success');
       
-      // Save to Firebase (only for farms in the "farms" node)
+      // Save to Firebase (only for user-added farms)
       const scheduleRef = ref(database, `farms/${selectedFarm.id}/irrigationSchedule`);
       await set(scheduleRef, {
         autoMode,
@@ -471,7 +478,7 @@ export default function ControlScreen() {
               triggerHaptic('impact');
               setIsIrrigating(true);
               
-              // Save irrigation log (only for farms in the "farms" node)
+              // Save irrigation log (only for user-added farms)
               if (!selectedFarm.id.startsWith('farm')) {
                 const irrigationLogRef = push(ref(database, `farms/${selectedFarm.id}/irrigationLogs`));
                 await set(irrigationLogRef, {
@@ -495,7 +502,7 @@ export default function ControlScreen() {
               setTimeout(async () => {
                 setIsIrrigating(false);
                 
-                // Update log (only for farms in the "farms" node)
+                // Update log (only for user-added farms)
                 if (!selectedFarm.id.startsWith('farm')) {
                   // In real implementation, you would update the log here
                 }
@@ -531,10 +538,15 @@ export default function ControlScreen() {
       return;
     }
 
+    if (!user) {
+      Alert.alert("Authentication Required", "Please login to add a farm.");
+      return;
+    }
+
     try {
       setIsLoading(true);
       
-      const newFarm: Omit<Farm, 'id'> = {
+      const newFarm: any = {
         name: quickFarmName.trim(),
         location: "", // Leave empty until populated
         totalAcres: 0, // Leave as 0 until populated
@@ -543,6 +555,7 @@ export default function ControlScreen() {
         irrigationType: "Manual", // Default
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        userId: user.uid, // Tie to current user
         status: 'healthy',
         sensorData: {
           soilMoisture: 0,
@@ -573,7 +586,7 @@ export default function ControlScreen() {
       
       Alert.alert(
         "✅ Farm Added",
-        `Farm "${quickFarmName}" has been added.\n\nPlease add more details in the Farms screen.`,
+        `Farm "${quickFarmName}" has been added to your account.\n\nPlease add more details in the Farms screen.`,
         [{ text: "OK", style: "default" }]
       );
       
@@ -627,7 +640,7 @@ export default function ControlScreen() {
         <View style={[styles.loadingContainer, { paddingTop: insets.top + 100 }]}>
           <ActivityIndicator size="large" color={theme.primary} />
           <ThemedText style={[styles.loadingText, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
-            Loading farms and sensor data...
+            Loading your farms...
           </ThemedText>
         </View>
       </ThemedView>
@@ -660,15 +673,27 @@ export default function ControlScreen() {
             Irrigation Control
           </ThemedText>
           <View style={styles.headerActions}>
-            <Pressable
-              onPress={() => setShowAddFarmModal(true)}
-              style={[styles.addFarmButton, { backgroundColor: theme.backgroundSecondary }]}
-            >
-              <Feather name="plus" size={18} color={theme.primary} />
-              <ThemedText style={[styles.addFarmText, { color: theme.primary }]}>
-                Add Farm
-              </ThemedText>
-            </Pressable>
+            {user ? (
+              <Pressable
+                onPress={() => setShowAddFarmModal(true)}
+                style={[styles.addFarmButton, { backgroundColor: theme.backgroundSecondary }]}
+              >
+                <Feather name="plus" size={18} color={theme.primary} />
+                <ThemedText style={[styles.addFarmText, { color: theme.primary }]}>
+                  Add Farm
+                </ThemedText>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => navigation.navigate('Login' as never)}
+                style={[styles.loginButton, { backgroundColor: theme.primary }]}
+              >
+                <Feather name="log-in" size={18} color="#FFFFFF" />
+                <ThemedText style={[styles.loginButtonText, { color: '#FFFFFF' }]}>
+                  Login
+                </ThemedText>
+              </Pressable>
+            )}
           </View>
         </View>
 
@@ -679,11 +704,33 @@ export default function ControlScreen() {
               Select Farm
             </ThemedText>
             <ThemedText style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
-              {farms.length} farm{farms.length !== 1 ? 's' : ''} available
+              {farms.length} farm{farms.length !== 1 ? 's' : ''} in your account
             </ThemedText>
           </View>
           
-          {farms.length === 0 ? (
+          {!user ? (
+            <Pressable
+              onPress={() => navigation.navigate('Login' as never)}
+              style={[
+                styles.notLoggedInCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                Shadows.small,
+              ]}
+            >
+              <View style={styles.notLoggedInContent}>
+                <View style={[styles.notLoggedInIcon, { backgroundColor: `${theme.warning}15` }]}>
+                  <Feather name="lock" size={28} color={theme.warning} />
+                </View>
+                <View style={styles.notLoggedInText}>
+                  <ThemedText style={styles.notLoggedInTitle}>Login Required</ThemedText>
+                  <ThemedText style={[styles.notLoggedInDescription, { color: theme.textSecondary }]}>
+                    Please login to view and manage your farms
+                  </ThemedText>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </View>
+            </Pressable>
+          ) : farms.length === 0 ? (
             <Pressable
               onPress={() => setShowAddFarmModal(true)}
               style={[
@@ -697,7 +744,7 @@ export default function ControlScreen() {
                   <Feather name="map" size={28} color={theme.primary} />
                 </View>
                 <View style={styles.noFarmsText}>
-                  <ThemedText style={styles.noFarmsTitle}>No Farms Available</ThemedText>
+                  <ThemedText style={styles.noFarmsTitle}>No Farms Added</ThemedText>
                   <ThemedText style={[styles.noFarmsDescription, { color: theme.textSecondary }]}>
                     Add your first farm to start controlling irrigation
                   </ThemedText>
@@ -772,68 +819,79 @@ export default function ControlScreen() {
                     const hasSensorData = farm.sensorData && (farm.sensorData.soilMoisture > 0 || farm.sensorData.pH > 0);
                     
                     return (
-                      <Pressable
-                        key={farm.id}
-                        onPress={() => {
-                          const updatedFarm = { ...farm, status: farmStatus };
-                          setSelectedFarm(updatedFarm);
-                          setShowFarmPicker(false);
-                          triggerHaptic('impact');
-                          
-                          // Load farm settings
-                          if (farm.irrigationSchedule) {
-                            setAutoMode(farm.irrigationSchedule.autoMode);
-                            setScheduleTime(farm.irrigationSchedule.scheduleTime || "06:00");
-                            setDuration(farm.irrigationSchedule.duration || 45);
-                          }
-                          
-                          // Load initial sensor data
-                          if (farm.sensorData) {
-                            setRealTimeSensorData({
-                              soilMoisture: farm.sensorData.soilMoisture,
-                              pH: farm.sensorData.pH,
-                              temperature: farm.sensorData.temperature
-                            });
-                          }
-                        }}
-                        style={[
-                          styles.farmOption,
-                          farm.id === selectedFarm?.id && styles.farmOptionSelected,
-                        ]}
-                      >
-                        <View style={styles.farmOptionLeft}>
-                          <Feather 
-                            name={getStatusIcon(farmStatus)} 
-                            size={14} 
-                            color={getStatusColor(farmStatus)} 
-                          />
-                          <View style={styles.farmOptionInfo}>
-                            <ThemedText style={styles.farmOptionName}>{farm.name}</ThemedText>
-                            <ThemedText style={[styles.farmOptionDetails, { color: theme.textSecondary }]}>
-                              {farm.cropTypes.length > 0 ? farm.cropTypes[0] : "Field"} • {farm.sensorData?.soilMoisture || 0}% moisture
-                            </ThemedText>
+                      <View key={farm.id} style={styles.farmOptionContainer}>
+                        <Pressable
+                          onPress={() => {
+                            const updatedFarm = { ...farm, status: farmStatus };
+                            setSelectedFarm(updatedFarm);
+                            setShowFarmPicker(false);
+                            triggerHaptic('impact');
+                            
+                            // Load farm settings
+                            if (farm.irrigationSchedule) {
+                              setAutoMode(farm.irrigationSchedule.autoMode);
+                              setScheduleTime(farm.irrigationSchedule.scheduleTime || "06:00");
+                              setDuration(farm.irrigationSchedule.duration || 45);
+                            }
+                            
+                            // Load initial sensor data
+                            if (farm.sensorData) {
+                              setRealTimeSensorData({
+                                soilMoisture: farm.sensorData.soilMoisture,
+                                pH: farm.sensorData.pH,
+                                temperature: farm.sensorData.temperature
+                              });
+                            }
+                          }}
+                          style={[
+                            styles.farmOption,
+                            farm.id === selectedFarm?.id && styles.farmOptionSelected,
+                          ]}
+                        >
+                          <View style={styles.farmOptionLeft}>
+                            <Feather 
+                              name={getStatusIcon(farmStatus)} 
+                              size={14} 
+                              color={getStatusColor(farmStatus)} 
+                            />
+                            <View style={styles.farmOptionInfo}>
+                              <ThemedText style={styles.farmOptionName}>{farm.name}</ThemedText>
+                              <ThemedText style={[styles.farmOptionDetails, { color: theme.textSecondary }]}>
+                                {farm.cropTypes.length > 0 ? farm.cropTypes[0] : "Field"} • {farm.sensorData?.soilMoisture || 0}% moisture
+                              </ThemedText>
+                            </View>
                           </View>
-                        </View>
-                        <View style={styles.farmOptionRight}>
-                          {farm.id.startsWith('farm') && (
-                            <View style={[styles.sensorOnlyBadge, { backgroundColor: `${theme.accent}15` }]}>
-                              <ThemedText style={[styles.sensorOnlyText, { color: theme.accent }]}>
-                                Sensor
-                              </ThemedText>
-                            </View>
-                          )}
-                          {!hasSensorData && !farm.id.startsWith('farm') && (
-                            <View style={[styles.noDataBadge, { backgroundColor: `${theme.warning}15` }]}>
-                              <ThemedText style={[styles.noDataText, { color: theme.warning }]}>
-                                No Data
-                              </ThemedText>
-                            </View>
-                          )}
-                          {farm.id === selectedFarm?.id && (
-                            <Feather name="check" size={18} color={theme.primary} />
-                          )}
-                        </View>
-                      </Pressable>
+                          <View style={styles.farmOptionRight}>
+                            {farm.id.startsWith('farm') && (
+                              <View style={[styles.sensorOnlyBadge, { backgroundColor: `${theme.accent}15` }]}>
+                                <ThemedText style={[styles.sensorOnlyText, { color: theme.accent }]}>
+                                  Demo
+                                </ThemedText>
+                              </View>
+                            )}
+                            {!hasSensorData && !farm.id.startsWith('farm') && (
+                              <View style={[styles.noDataBadge, { backgroundColor: `${theme.warning}15` }]}>
+                                <ThemedText style={[styles.noDataText, { color: theme.warning }]}>
+                                  No Data
+                                </ThemedText>
+                              </View>
+                            )}
+                            {farm.id === selectedFarm?.id && (
+                              <Feather name="check" size={18} color={theme.primary} />
+                            )}
+                          </View>
+                        </Pressable>
+                        
+                        {/* Delete button for user-added farms */}
+                        {!farm.id.startsWith('farm') && (
+                          <TouchableOpacity
+                            onPress={() => handleDeleteFarm(farm)}
+                            style={styles.deleteOptionButton}
+                          >
+                            <Feather name="trash-2" size={16} color={theme.critical} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     );
                   })}
                   
@@ -911,14 +969,14 @@ export default function ControlScreen() {
               </View>
               <ThemedText style={[styles.sensorNote, { color: theme.textSecondary }]}>
                 {selectedFarm.id.startsWith('farm') 
-                  ? "Real-time data from field sensors" 
-                  : "Updated from farm sensors"}
+                  ? "Demo farm data" 
+                  : "Real-time data from your sensors"}
               </ThemedText>
             </View>
           </View>
         )}
 
-        {/* Irrigation Controls - Only show for farms that support irrigation */}
+        {/* Irrigation Controls - Only show for user-added farms */}
         {selectedFarm && !selectedFarm.id.startsWith('farm') && (
           <>
             {/* Mode Selection */}
@@ -1085,7 +1143,7 @@ export default function ControlScreen() {
           </>
         )}
 
-        {/* Info for sensor-only farms */}
+        {/* Info for demo farms */}
         {selectedFarm && selectedFarm.id.startsWith('farm') && (
           <View style={styles.section}>
             <View style={[
@@ -1098,10 +1156,33 @@ export default function ControlScreen() {
               </View>
               <View style={styles.infoContent}>
                 <ThemedText style={[styles.infoTitle, { color: theme.info }]}>
-                  Sensor-Only Farm
+                  Demo Farm
                 </ThemedText>
                 <ThemedText style={[styles.infoText, { color: theme.textSecondary }]}>
-                  This farm is configured for sensor monitoring only. Irrigation control features are not available for this farm type.
+                  This is a demo farm for testing sensor data. To add your own farm and control irrigation, please add a new farm.
+                </ThemedText>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* User not logged in message */}
+        {!user && (
+          <View style={styles.section}>
+            <View style={[
+              styles.infoCard,
+              { backgroundColor: `${theme.warning}15`, borderColor: theme.warning },
+              Shadows.small,
+            ]}>
+              <View style={styles.infoIcon}>
+                <Feather name="user-x" size={24} color={theme.warning} />
+              </View>
+              <View style={styles.infoContent}>
+                <ThemedText style={[styles.infoTitle, { color: theme.warning }]}>
+                  Login Required
+                </ThemedText>
+                <ThemedText style={[styles.infoText, { color: theme.textSecondary }]}>
+                  Please login to add your own farms and access irrigation controls.
                 </ThemedText>
               </View>
             </View>
@@ -1109,7 +1190,7 @@ export default function ControlScreen() {
         )}
       </ScrollView>
 
-      {/* Action Buttons - Only show for farms that can be irrigated */}
+      {/* Action Buttons - Only show for user-added farms */}
       {selectedFarm && !selectedFarm.id.startsWith('farm') && (
         <View
           style={[
@@ -1374,10 +1455,10 @@ export default function ControlScreen() {
                 onPress={handleQuickAddFarm}
                 variant="primary"
                 style={styles.modalButton}
-                disabled={!quickFarmName.trim() || isLoading}
+                disabled={!quickFarmName.trim() || isLoading || !user}
                 loading={isLoading}
               >
-                Add Farm
+                {user ? 'Add Farm' : 'Login Required'}
               </Button>
             </View>
           </Pressable>
@@ -1431,6 +1512,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  loginButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+  },
+  loginButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   section: {
     marginBottom: Spacing.xl,
   },
@@ -1444,6 +1537,35 @@ const styles = StyleSheet.create({
     // Style handled by ThemedText
   },
   sectionSubtitle: {
+    fontSize: 13,
+  },
+  notLoggedInCard: {
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+  },
+  notLoggedInContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  notLoggedInIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notLoggedInText: {
+    flex: 1,
+  },
+  notLoggedInTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  notLoggedInDescription: {
     fontSize: 13,
   },
   noFarmsCard: {
@@ -1524,11 +1646,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
+  farmOptionContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   farmOption: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: Spacing.md,
+    flex: 1,
   },
   farmOptionSelected: {
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
@@ -1554,6 +1681,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+  },
+  deleteOptionButton: {
+    padding: Spacing.sm,
+    marginRight: Spacing.sm,
   },
   sensorOnlyBadge: {
     paddingHorizontal: Spacing.xs,
