@@ -7,6 +7,7 @@ import FieldDetailScreen from "@/screens/FieldDetailScreen";
 import LoginScreen from "@/screens/auth/LoginScreen";
 import SignupScreen from "@/screens/auth/SignupScreen";
 import { useScreenOptions } from "@/hooks/useScreenOptions";
+import ForgotPasswordScreen from "@/screens/auth/forgot-password";
 
 export type RootStackParamList = {
   Auth: undefined;
@@ -40,6 +41,14 @@ export default function RootStackNavigator() {
         options={{
           ...opaqueScreenOptions,
           headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
+        options={{ 
+          title: "Reset Password",
+          headerShown: true 
         }}
       />
       
