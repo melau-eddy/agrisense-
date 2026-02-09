@@ -22,6 +22,7 @@ import { AuthInput } from "@/components/auth/AuthInput";
 import { AuthButton } from "@/components/auth/AuthButton";
 import { useAuth } from "@/contexts/AuthContext";
 
+
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function LoginScreen() {
@@ -69,22 +70,40 @@ export default function LoginScreen() {
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!form.email) {
-      Alert.alert("Email Required", "Please enter your email address first.");
-      return;
-    }
+  // LoginScreen.tsx - Updated handleForgotPassword function
+  // const handleForgotPassword = async () => {
+  //   if (!form.email) {
+  //     Alert.alert("Email Required", "Please enter your email address first.");
+  //     return;
+  //   }
 
-    try {
-      await resetPassword(form.email);
-      Alert.alert(
-        "Reset Email Sent",
-        "Check your email for password reset instructions.",
-        [{ text: "OK" }]
-      );
-    } catch (error: any) {
-      Alert.alert("Reset Failed", error.message);
-    }
+  //   if (!/\S+@\S+\.\S+/.test(form.email)) {
+  //     Alert.alert("Invalid Email", "Please enter a valid email address.");
+  //     return;
+  //   }
+
+  //   try {
+  //     setLoading(true);
+  //     const result = await resetPassword(form.email);
+      
+  //     if (result.success) {
+  //       Alert.alert(
+  //         "✅ Reset Email Sent",
+  //         "Check your email for password reset instructions. The link will expire in 1 hour.",
+  //         [{ text: "OK" }]
+  //       );
+  //     } else {
+  //       Alert.alert("Reset Failed", result.error || "Failed to send reset email.");
+  //     }
+  //   } catch (error: any) {
+  //     Alert.alert("Reset Failed", error.message || "An unexpected error occurred.");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+  // In LoginScreen.tsx
+  const handleForgotPassword = () => {
+    navigation.navigate("ForgotPassword");
   };
 
   return (
@@ -109,7 +128,7 @@ export default function LoginScreen() {
               ]}
             >
               <Feather
-                name="leaf"
+                name="droplet"
                 size={40}
                 color={isDark ? Colors.dark.primary : Colors.light.primary}
               />
