@@ -13,7 +13,6 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useNavigation, useIsFocused } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
-import { getAuth } from "firebase/auth";
 import { getDatabase, ref, get, onValue, off } from "firebase/database";
 
 import { ThemedText } from "@/components/ThemedText";
@@ -81,6 +80,22 @@ export default function DashboardScreen() {
 
   // Load all data from Firebase
   const loadAllData = async () => {
+    if (!user) {
+      setFarms([]);
+      setOverallStats({
+        totalWaterSaved: 0,
+        waterSavingsPercentage: 0,
+        yieldImprovement: 0,
+        soilHealthScore: 0,
+        co2Reduced: 0,
+        averageMoisture: 0,
+        averagePH: 0
+      });
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
       setIsRefreshing(true);
@@ -91,46 +106,7 @@ export default function DashboardScreen() {
       let farmCount = 0;
       let healthyFarms = 0;
       
-      // 1. Load farm1-farm5 from root level
-      const rootFarmIds = ['farm1', 'farm2', 'farm3', 'farm4', 'farm5'];
-      
-      for (const farmId of rootFarmIds) {
-        const farmRef = ref(database, farmId);
-        const snapshot = await get(farmRef);
-        
-        if (snapshot.exists()) {
-          const farmData = snapshot.val();
-          const sensorData = extractSensorData(farmData);
-          
-          totalMoisture += sensorData.soilMoisture;
-          totalPH += sensorData.pH;
-          farmCount++;
-          
-          // Determine farm status based on sensor data
-          let status: 'healthy' | 'attention' | 'critical' = 'healthy';
-          if (sensorData.soilMoisture < 30 || sensorData.pH < 5 || sensorData.pH > 8) {
-            status = 'attention';
-          }
-          if (sensorData.soilMoisture < 20 || sensorData.pH < 4 || sensorData.pH > 9) {
-            status = 'critical';
-          }
-          
-          if (status === 'healthy') healthyFarms++;
-          
-          farmsArray.push({
-            id: farmId,
-            name: `Farm ${farmId.charAt(farmId.length - 1)}`,
-            acres: 0,
-            cropType: "Field Crop",
-            status,
-            moisture: sensorData.soilMoisture,
-            pH: sensorData.pH,
-            temperature: sensorData.temperature
-          });
-        }
-      }
-      
-      // 2. Load farms from the "farms" node
+      // Load only farms that belong to the current user from the "farms" node
       const farmsRef = ref(database, 'farms');
       const farmsSnapshot = await get(farmsRef);
       
@@ -140,50 +116,47 @@ export default function DashboardScreen() {
         Object.keys(farmsData).forEach(key => {
           const farm = farmsData[key];
           
-          // Skip if this farm is a duplicate of root farms (by name)
-          const isDuplicate = farmsArray.some(f => 
-            f.name.toLowerCase() === farm.name?.toLowerCase()
-          );
+          // Only include farms that belong to the current user
+          if (farm.userId !== user.uid) return;
           
-          if (!isDuplicate) {
-            // Extract sensor data
-            let sensorData;
-            if (farm.sensorData) {
-              sensorData = extractSensorData(farm.sensorData);
-            } else {
-              sensorData = extractSensorData(farm);
-            }
-            
-            totalMoisture += sensorData.soilMoisture;
-            totalPH += sensorData.pH;
-            farmCount++;
-            
-            // Determine status
-            let status: 'healthy' | 'attention' | 'critical' = farm.status || 'healthy';
-            if (!farm.status) {
-              if (sensorData.soilMoisture < 30 || sensorData.pH < 5 || sensorData.pH > 8) {
-                status = 'attention';
-              }
-              if (sensorData.soilMoisture < 20 || sensorData.pH < 4 || sensorData.pH > 9) {
-                status = 'critical';
-              }
-            }
-            
-            if (status === 'healthy') healthyFarms++;
-            
-            farmsArray.push({
-              id: key,
-              name: farm.name || `Farm ${key}`,
-              acres: farm.totalAcres || 0,
-              cropType: farm.cropTypes?.[0] || "Unknown",
-              status,
-              moisture: sensorData.soilMoisture,
-              pH: sensorData.pH,
-              temperature: sensorData.temperature,
-              location: farm.location,
-              soilType: farm.soilType
-            });
+          // Extract sensor data
+          let sensorData;
+          if (farm.sensorData) {
+            sensorData = extractSensorData(farm.sensorData);
+          } else {
+            sensorData = extractSensorData(farm);
           }
+          
+          totalMoisture += sensorData.soilMoisture;
+          totalPH += sensorData.pH;
+          farmCount++;
+          
+          // Determine status
+          let status: 'healthy' | 'attention' | 'critical' = farm.status || 'healthy';
+          if (!farm.status) {
+            if (sensorData.soilMoisture < 30 || sensorData.pH < 5 || sensorData.pH > 8) {
+              status = 'attention';
+            }
+            if (sensorData.soilMoisture < 20 || sensorData.pH < 4 || sensorData.pH > 9) {
+              status = 'critical';
+            }
+          }
+          
+          if (status === 'healthy') healthyFarms++;
+          
+          farmsArray.push({
+            id: key,
+            name: farm.name || `Farm ${key}`,
+            acres: farm.totalAcres || 0,
+            cropType: farm.cropTypes?.[0] || "Unknown",
+            status,
+            moisture: sensorData.soilMoisture,
+            pH: sensorData.pH,
+            temperature: sensorData.temperature,
+            location: farm.location,
+            soilType: farm.soilType,
+            userId: farm.userId // Ensure we track the user ID
+          });
         });
       }
       
@@ -280,7 +253,7 @@ export default function DashboardScreen() {
     return () => {
       // Clean up any listeners
     };
-  }, [isFocused]);
+  }, [isFocused, user]);
 
   useEffect(() => {
     if (!user?.uid || !isFocused) return;
@@ -308,17 +281,6 @@ export default function DashboardScreen() {
       unsubscribeAlerts();
     };
   }, [user?.uid, isFocused]);
-
-  useEffect(() => {
-    if (isFocused) {
-      const auth = getAuth();
-      const currentUser = auth.currentUser;
-      
-      if (currentUser) {
-        setIsLoadingAlerts(true);
-      }
-    }
-  }, [isFocused]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -348,6 +310,11 @@ export default function DashboardScreen() {
   };
 
   const handleQuickAction = (action: string) => {
+    if (!user && action !== 'ai' && action !== 'settings') {
+      Alert.alert("Login Required", "Please login to access this feature.");
+      return;
+    }
+
     switch (action) {
       case "irrigation":
         navigation.navigate("Control");
@@ -403,12 +370,14 @@ export default function DashboardScreen() {
         <View style={[styles.loadingContainer, { paddingTop: insets.top + 100 }]}>
           <ActivityIndicator size="large" color={theme.primary} />
           <ThemedText style={[styles.loadingText, { color: theme.textSecondary, marginTop: Spacing.lg }]}>
-            Loading farm data...
+            {user ? "Loading your farm data..." : "Loading..."}
           </ThemedText>
         </View>
       </ThemedView>
     );
   }
+
+  const userFarms = farms.filter(farm => farm.userId === user?.uid);
 
   return (
     <ThemedView style={styles.container}>
@@ -461,15 +430,49 @@ export default function DashboardScreen() {
         </View>
 
         <View style={styles.welcomeSection}>
-          <ThemedText type="h2" style={styles.welcomeTitle}>
-            Welcome back, {user?.displayName?.split(' ')[0] || 'Farmer'}! 🌱
-          </ThemedText>
-          <ThemedText style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </ThemedText>
+          {user ? (
+            <>
+              <ThemedText type="h2" style={styles.welcomeTitle}>
+                Welcome back, {user?.displayName?.split(' ')[0] || 'Farmer'}! 🌱
+              </ThemedText>
+              <ThemedText style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} • {userFarms.length} farm{userFarms.length !== 1 ? 's' : ''}
+              </ThemedText>
+            </>
+          ) : (
+            <>
+              <ThemedText type="h2" style={styles.welcomeTitle}>
+                Welcome to AgriSense! 🌱
+              </ThemedText>
+              <ThemedText style={[styles.welcomeSubtitle, { color: theme.textSecondary }]}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} • Please login to access your farms
+              </ThemedText>
+            </>
+          )}
         </View>
 
-        {recentAlert && (
+        {!user ? (
+          <Pressable
+            onPress={() => navigation.navigate('Login' as never)}
+            style={[
+              styles.loginRequiredCard,
+              { backgroundColor: theme.cardBackground, borderColor: theme.border },
+            ]}
+          >
+            <View style={styles.loginRequiredContent}>
+              <View style={[styles.loginRequiredIcon, { backgroundColor: `${theme.warning}15` }]}>
+                <Feather name="log-in" size={28} color={theme.warning} />
+              </View>
+              <View style={styles.loginRequiredText}>
+                <ThemedText style={styles.loginRequiredTitle}>Login Required</ThemedText>
+                <ThemedText style={[styles.loginRequiredDescription, { color: theme.textSecondary }]}>
+                  Please login to view your farm dashboard and access all features
+                </ThemedText>
+              </View>
+              <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+            </View>
+          </Pressable>
+        ) : recentAlert && (
           <Pressable
             style={[
               styles.alertBanner,
@@ -553,389 +556,477 @@ export default function DashboardScreen() {
           </View>
         </Pressable>
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText type="h3" style={styles.sectionTitle}>
-              Farm Overview
-            </ThemedText>
-            <Pressable onPress={() => Alert.alert("Analytics", "Detailed analytics will be available soon")}>
-              <ThemedText type="link" style={{ color: theme.link }}>
-                View Analytics
-              </ThemedText>
-            </Pressable>
-          </View>
-          <View style={styles.kpiGrid}>
-            <KPICard
-              title="Water Savings"
-              value={overallStats.waterSavingsPercentage}
-              unit="%"
-              icon="droplet"
-              color={theme.accent}
-              trend="up"
-              trendValue="Based on sensor data"
-              onPress={() => handleQuickAction("irrigation")}
-            />
-            <KPICard
-              title="Yield Improvement"
-              value={overallStats.yieldImprovement}
-              unit="%"
-              icon="trending-up"
-              color={theme.success}
-              trend="up"
-              trendValue="Estimated from soil health"
-            />
-          </View>
-          <View style={styles.kpiGrid}>
-            <KPICard
-              title="Soil Health"
-              value={overallStats.soilHealthScore}
-              unit="/100"
-              icon="activity"
-              color={theme.primary}
-              trend="neutral"
-              trendValue={`Avg moisture: ${overallStats.averageMoisture}%`}
-              onPress={() => handleQuickAction("soil")}
-            />
-            <KPICard
-              title="Active Alerts"
-              value={getCriticalAlertsCount()}
-              icon="alert-triangle"
-              color={theme.critical}
-              trend={getCriticalAlertsCount() > 0 ? "up" : "neutral"}
-              trendValue={getCriticalAlertsCount() > 0 ? "Needs attention" : "All clear"}
-              onPress={() => handleQuickAction("notifications")}
-            />
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            Quick Actions
-          </ThemedText>
-          <View style={styles.quickActionsGrid}>
-            <Pressable
-              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("irrigation")}
-            >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.accent}15` }]}>
-                <Feather name="droplet" size={24} color={theme.accent} />
+        {user && (
+          <>
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="h3" style={styles.sectionTitle}>
+                  My Farm Overview
+                </ThemedText>
+                <Pressable onPress={() => Alert.alert("Analytics", "Detailed analytics will be available soon")}>
+                  <ThemedText type="link" style={{ color: theme.link }}>
+                    View Analytics
+                  </ThemedText>
+                </Pressable>
               </View>
-              <ThemedText style={styles.quickActionText}>Irrigation Control</ThemedText>
-            </Pressable>
-
-            <Pressable
-              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("ai")}
-            >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.primary}15` }]}>
-                <Feather name="cpu" size={24} color={theme.primary} />
-              </View>
-              <ThemedText style={styles.quickActionText}>AI Assistant</ThemedText>
-            </Pressable>
-
-            <Pressable
-              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("weather")}
-            >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.warning}15` }]}>
-                <Feather name="cloud" size={24} color={theme.warning} />
-              </View>
-              <ThemedText style={styles.quickActionText}>Weather</ThemedText>
-            </Pressable>
-
-            <Pressable
-              style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => handleQuickAction("notifications")}
-            >
-              <View style={[styles.quickActionIcon, { backgroundColor: `${theme.critical}15` }]}>
-                <Feather name="bell" size={24} color={theme.critical} />
-              </View>
-              <ThemedText style={styles.quickActionText}>
-                {unreadCount > 0 ? `Alerts (${unreadCount})` : 'Notifications'}
-              </ThemedText>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            Environmental Impact
-          </ThemedText>
-          <View
-            style={[
-              styles.impactCard,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            ]}
-          >
-            <View style={styles.impactRow}>
-              <View style={styles.impactItem}>
-                <View
+              
+              {userFarms.length > 0 ? (
+                <>
+                  <View style={styles.kpiGrid}>
+                    <KPICard
+                      title="Water Savings"
+                      value={overallStats.waterSavingsPercentage}
+                      unit="%"
+                      icon="droplet"
+                      color={theme.accent}
+                      trend="up"
+                      trendValue="Based on sensor data"
+                      onPress={() => handleQuickAction("irrigation")}
+                    />
+                    <KPICard
+                      title="Yield Improvement"
+                      value={overallStats.yieldImprovement}
+                      unit="%"
+                      icon="trending-up"
+                      color={theme.success}
+                      trend="up"
+                      trendValue="Estimated from soil health"
+                    />
+                  </View>
+                  <View style={styles.kpiGrid}>
+                    <KPICard
+                      title="Soil Health"
+                      value={overallStats.soilHealthScore}
+                      unit="/100"
+                      icon="activity"
+                      color={theme.primary}
+                      trend="neutral"
+                      trendValue={`Avg moisture: ${overallStats.averageMoisture}%`}
+                      onPress={() => handleQuickAction("soil")}
+                    />
+                    <KPICard
+                      title="Active Alerts"
+                      value={getCriticalAlertsCount()}
+                      icon="alert-triangle"
+                      color={theme.critical}
+                      trend={getCriticalAlertsCount() > 0 ? "up" : "neutral"}
+                      trendValue={getCriticalAlertsCount() > 0 ? "Needs attention" : "All clear"}
+                      onPress={() => handleQuickAction("notifications")}
+                    />
+                  </View>
+                </>
+              ) : (
+                <Pressable
+                  onPress={() => navigation.navigate('AddFarm' as never)}
                   style={[
-                    styles.impactIcon,
-                    { backgroundColor: `${theme.accent}15` },
+                    styles.noFarmsKPICard,
+                    { backgroundColor: theme.cardBackground, borderColor: theme.border },
                   ]}
                 >
-                  <Feather
-                    name="droplet"
-                    size={24}
-                    color={theme.accent}
-                  />
-                </View>
-                <ThemedText type="h2" style={styles.impactValue}>
-                  {(overallStats.totalWaterSaved / 1000).toFixed(0)}K
-                </ThemedText>
-                <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
-                  Liters Saved
-                </ThemedText>
-              </View>
-              <View style={[styles.divider, { backgroundColor: theme.border }]} />
-              <View style={styles.impactItem}>
-                <View
-                  style={[
-                    styles.impactIcon,
-                    { backgroundColor: `${theme.success}15` },
-                  ]}
+                  <View style={styles.noFarmsKPIContent}>
+                    <View style={[styles.noFarmsKPIIcon, { backgroundColor: `${theme.primary}15` }]}>
+                      <Feather name="map" size={24} color={theme.primary} />
+                    </View>
+                    <View style={styles.noFarmsKPIText}>
+                      <ThemedText style={styles.noFarmsKPITitle}>No Farms Added Yet</ThemedText>
+                      <ThemedText style={[styles.noFarmsKPIDescription, { color: theme.textSecondary }]}>
+                        Add your first farm to start tracking metrics
+                      </ThemedText>
+                    </View>
+                    <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+                  </View>
+                </Pressable>
+              )}
+            </View>
+
+            <View style={styles.section}>
+              <ThemedText type="h3" style={styles.sectionTitle}>
+                Quick Actions
+              </ThemedText>
+              <View style={styles.quickActionsGrid}>
+                <Pressable
+                  style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+                  onPress={() => handleQuickAction("irrigation")}
                 >
-                  <Feather
-                    name="wind"
-                    size={24}
-                    color={theme.success}
-                  />
-                </View>
-                <ThemedText type="h2" style={styles.impactValue}>
-                  {overallStats.co2Reduced}
-                </ThemedText>
-                <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
-                  kg CO2 Reduced
-                </ThemedText>
+                  <View style={[styles.quickActionIcon, { backgroundColor: `${theme.accent}15` }]}>
+                    <Feather name="droplet" size={24} color={theme.accent} />
+                  </View>
+                  <ThemedText style={styles.quickActionText}>Irrigation Control</ThemedText>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+                  onPress={() => handleQuickAction("ai")}
+                >
+                  <View style={[styles.quickActionIcon, { backgroundColor: `${theme.primary}15` }]}>
+                    <Feather name="cpu" size={24} color={theme.primary} />
+                  </View>
+                  <ThemedText style={styles.quickActionText}>AI Assistant</ThemedText>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+                  onPress={() => handleQuickAction("weather")}
+                >
+                  <View style={[styles.quickActionIcon, { backgroundColor: `${theme.warning}15` }]}>
+                    <Feather name="cloud" size={24} color={theme.warning} />
+                  </View>
+                  <ThemedText style={styles.quickActionText}>Weather</ThemedText>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.quickActionButton, { backgroundColor: theme.backgroundSecondary }]}
+                  onPress={() => handleQuickAction("notifications")}
+                >
+                  <View style={[styles.quickActionIcon, { backgroundColor: `${theme.critical}15` }]}>
+                    <Feather name="bell" size={24} color={theme.critical} />
+                  </View>
+                  <ThemedText style={styles.quickActionText}>
+                    {unreadCount > 0 ? `Alerts (${unreadCount})` : 'Notifications'}
+                  </ThemedText>
+                </Pressable>
               </View>
             </View>
-          </View>
-        </View>
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText type="h3" style={styles.sectionTitle}>
-              7-Day Weather Forecast
-            </ThemedText>
-            <Pressable onPress={() => handleQuickAction("weather")}>
-              <ThemedText type="link" style={{ color: theme.link }}>
-                Detailed Forecast
-              </ThemedText>
-            </Pressable>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.weatherScroll}
-          >
-            {weatherForecast.map((day, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.weatherCard,
-                  { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                  index === 0 && {
-                    backgroundColor: theme.primary,
-                    borderColor: "transparent",
-                  },
-                ]}
-              >
-                <ThemedText
+            {userFarms.length > 0 && (
+              <View style={styles.section}>
+                <ThemedText type="h3" style={styles.sectionTitle}>
+                  Environmental Impact
+                </ThemedText>
+                <View
                   style={[
-                    styles.weatherDay,
-                    { color: index === 0 ? "#FFFFFF" : theme.textSecondary },
+                    styles.impactCard,
+                    { backgroundColor: theme.cardBackground, borderColor: theme.border },
                   ]}
                 >
-                  {day.day}
+                  <View style={styles.impactRow}>
+                    <View style={styles.impactItem}>
+                      <View
+                        style={[
+                          styles.impactIcon,
+                          { backgroundColor: `${theme.accent}15` },
+                        ]}
+                      >
+                        <Feather
+                          name="droplet"
+                          size={24}
+                          color={theme.accent}
+                        />
+                      </View>
+                      <ThemedText type="h2" style={styles.impactValue}>
+                        {(overallStats.totalWaterSaved / 1000).toFixed(0)}K
+                      </ThemedText>
+                      <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
+                        Liters Saved
+                      </ThemedText>
+                    </View>
+                    <View style={[styles.divider, { backgroundColor: theme.border }]} />
+                    <View style={styles.impactItem}>
+                      <View
+                        style={[
+                          styles.impactIcon,
+                          { backgroundColor: `${theme.success}15` },
+                        ]}
+                      >
+                        <Feather
+                          name="wind"
+                          size={24}
+                          color={theme.success}
+                        />
+                      </View>
+                      <ThemedText type="h2" style={styles.impactValue}>
+                        {overallStats.co2Reduced}
+                      </ThemedText>
+                      <ThemedText style={[styles.impactLabel, { color: theme.textSecondary }]}>
+                        kg CO2 Reduced
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="h3" style={styles.sectionTitle}>
+                  7-Day Weather Forecast
                 </ThemedText>
-                <Feather
-                  name={getWeatherIcon(day.condition)}
-                  size={24}
-                  color={index === 0 ? "#FFFFFF" : theme.text}
-                />
-                <ThemedText
-                  style={[styles.weatherTemp, index === 0 && { color: "#FFFFFF" }]}
-                >
-                  {day.temp}°
-                </ThemedText>
-                {day.rain > 0 && (
-                  <View style={styles.rainRow}>
-                    <Feather
-                      name="droplet"
-                      size={10}
-                      color={index === 0 ? "#FFFFFF" : theme.accent}
-                    />
+                <Pressable onPress={() => handleQuickAction("weather")}>
+                  <ThemedText type="link" style={{ color: theme.link }}>
+                    Detailed Forecast
+                  </ThemedText>
+                </Pressable>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.weatherScroll}
+              >
+                {weatherForecast.map((day, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.weatherCard,
+                      { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                      index === 0 && {
+                        backgroundColor: theme.primary,
+                        borderColor: "transparent",
+                      },
+                    ]}
+                  >
                     <ThemedText
                       style={[
-                        styles.rainText,
-                        {
-                          color: index === 0 ? "#FFFFFF" : theme.accent,
-                        },
+                        styles.weatherDay,
+                        { color: index === 0 ? "#FFFFFF" : theme.textSecondary },
                       ]}
                     >
-                      {day.rain}%
+                      {day.day}
+                    </ThemedText>
+                    <Feather
+                      name={getWeatherIcon(day.condition)}
+                      size={24}
+                      color={index === 0 ? "#FFFFFF" : theme.text}
+                    />
+                    <ThemedText
+                      style={[styles.weatherTemp, index === 0 && { color: "#FFFFFF" }]}
+                    >
+                      {day.temp}°
+                    </ThemedText>
+                    {day.rain > 0 && (
+                      <View style={styles.rainRow}>
+                        <Feather
+                          name="droplet"
+                          size={10}
+                          color={index === 0 ? "#FFFFFF" : theme.accent}
+                        />
+                        <ThemedText
+                          style={[
+                            styles.rainText,
+                            {
+                              color: index === 0 ? "#FFFFFF" : theme.accent,
+                            },
+                          ]}
+                        >
+                          {day.rain}%
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="h3" style={styles.sectionTitle}>
+                  My Fields ({userFarms.length} farm{userFarms.length !== 1 ? 's' : ''})
+                </ThemedText>
+                <Pressable onPress={() => navigation.navigate("Farms")}>
+                  <ThemedText type="link" style={{ color: theme.link }}>
+                    Manage Fields
+                  </ThemedText>
+                </Pressable>
+              </View>
+              <View
+                style={[
+                  styles.summaryCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                ]}
+              >
+                {userFarms.slice(0, 3).map((field, index) => (
+                  <Pressable
+                    key={field.id}
+                    onPress={() => navigation.navigate("Farms")}
+                    style={[
+                      styles.summaryRow,
+                      index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
+                    ]}
+                  >
+                    <View style={styles.summaryLeft}>
+                      <View
+                        style={[
+                          styles.statusIndicator,
+                          {
+                            backgroundColor: getStatusColor(field.status),
+                          },
+                        ]}
+                      />
+                      <View>
+                        <ThemedText style={styles.summaryName}>{field.name}</ThemedText>
+                        <ThemedText style={[styles.summaryAcres, { color: theme.textSecondary }]}>
+                          {field.acres > 0 ? `${field.acres} acres` : 'Unknown size'} • {field.cropType}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <View style={styles.summaryRight}>
+                      <View style={styles.moistureContainer}>
+                        <Feather
+                          name="droplet"
+                          size={14}
+                          color={theme.accent}
+                        />
+                        <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
+                      </View>
+                      <Feather name="chevron-right" size={16} color={theme.textSecondary} />
+                    </View>
+                  </Pressable>
+                ))}
+                
+                {userFarms.length === 0 && (
+                  <View style={styles.noData}>
+                    <Feather name="map" size={24} color={theme.textSecondary} />
+                    <ThemedText style={[styles.noDataText, { color: theme.textSecondary }]}>
+                      No farms found. Add your first farm!
+                    </ThemedText>
+                    <Pressable
+                      onPress={() => navigation.navigate('AddFarm' as never)}
+                      style={[styles.addFirstFarmButton, { backgroundColor: theme.primary }]}
+                    >
+                      <Feather name="plus" size={16} color="#FFFFFF" />
+                      <ThemedText style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600', marginLeft: 6 }}>
+                        Add First Farm
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                )}
+                
+                {userFarms.length > 3 && (
+                  <Pressable
+                    onPress={() => navigation.navigate("Farms")}
+                    style={styles.viewAllFields}
+                  >
+                    <ThemedText style={[styles.viewAllText, { color: theme.link }]}>
+                      View all {userFarms.length} fields
+                    </ThemedText>
+                    <Feather name="chevron-right" size={16} color={theme.link} />
+                  </Pressable>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.section}>
+              <ThemedText type="h3" style={styles.sectionTitle}>
+                Recent Activity
+              </ThemedText>
+              <View
+                style={[
+                  styles.activityCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                ]}
+              >
+                {alerts.slice(0, 2).map((alert, index) => (
+                  <Pressable
+                    key={alert.id}
+                    onPress={() => navigation.navigate("Notifications")}
+                    style={[
+                      styles.activityRow,
+                      index < 1 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
+                    ]}
+                  >
+                    <View style={styles.activityLeft}>
+                      <View style={[
+                        styles.activityIcon,
+                        { 
+                          backgroundColor: alert.type === 'critical' 
+                            ? `${theme.critical}15`
+                            : alert.type === 'warning'
+                              ? `${theme.warning}15`
+                              : alert.type === 'success'
+                                ? `${theme.success}15`
+                                : `${theme.primary}15`
+                        }
+                      ]}>
+                        <Feather 
+                          name={
+                            alert.type === 'critical' ? "alert-triangle" :
+                            alert.type === 'warning' ? "alert-circle" :
+                            alert.type === 'success' ? "check-circle" : "info"
+                          } 
+                          size={16} 
+                          color={
+                            alert.type === 'critical' ? theme.critical :
+                            alert.type === 'warning' ? theme.warning :
+                            alert.type === 'success' ? theme.success : theme.primary
+                          } 
+                        />
+                      </View>
+                      <View style={styles.activityContent}>
+                        <ThemedText style={styles.activityTitle}>{alert.title}</ThemedText>
+                        <ThemedText style={[styles.activitySubtitle, { color: theme.textSecondary }]}>
+                          {alert.category.charAt(0).toUpperCase() + alert.category.slice(1)}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <View style={styles.activityRight}>
+                      <ThemedText style={[styles.activityTime, { color: theme.textSecondary }]}>
+                        {new Date(alert.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </ThemedText>
+                      {!alert.read && (
+                        <View style={[styles.activityUnread, { backgroundColor: theme.primary }]} />
+                      )}
+                    </View>
+                  </Pressable>
+                ))}
+                
+                {alerts.length === 0 && (
+                  <View style={styles.noActivity}>
+                    <Feather name="check-circle" size={24} color={theme.textSecondary} />
+                    <ThemedText style={[styles.noActivityText, { color: theme.textSecondary }]}>
+                      No recent activity
                     </ThemedText>
                   </View>
                 )}
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText type="h3" style={styles.sectionTitle}>
-              Field Status ({farms.length} farms)
-            </ThemedText>
-            <Pressable onPress={() => navigation.navigate("Farms")}>
-              <ThemedText type="link" style={{ color: theme.link }}>
-                View All Fields
-              </ThemedText>
-            </Pressable>
-          </View>
-          <View
-            style={[
-              styles.summaryCard,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            ]}
-          >
-            {farms.slice(0, 3).map((field, index) => (
-              <Pressable
-                key={field.id}
-                onPress={() => navigation.navigate("Farms")}
-                style={[
-                  styles.summaryRow,
-                  index < 2 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
-                ]}
-              >
-                <View style={styles.summaryLeft}>
-                  <View
-                    style={[
-                      styles.statusIndicator,
-                      {
-                        backgroundColor: getStatusColor(field.status),
-                      },
-                    ]}
-                  />
-                  <View>
-                    <ThemedText style={styles.summaryName}>{field.name}</ThemedText>
-                    <ThemedText style={[styles.summaryAcres, { color: theme.textSecondary }]}>
-                      {field.acres > 0 ? `${field.acres} acres` : 'Unknown size'} • {field.cropType}
+                
+                {alerts.length > 0 && (
+                  <Pressable
+                    onPress={() => navigation.navigate("Notifications")}
+                    style={styles.viewAllActivity}
+                  >
+                    <ThemedText style={[styles.viewAllText, { color: theme.link }]}>
+                      View all activity
                     </ThemedText>
-                  </View>
-                </View>
-                <View style={styles.summaryRight}>
-                  <View style={styles.moistureContainer}>
-                    <Feather
-                      name="droplet"
-                      size={14}
-                      color={theme.accent}
-                    />
-                    <ThemedText style={styles.summaryMoisture}>{field.moisture}%</ThemedText>
-                  </View>
-                  <Feather name="chevron-right" size={16} color={theme.textSecondary} />
-                </View>
-              </Pressable>
-            ))}
-            
-            {farms.length === 0 && (
-              <View style={styles.noData}>
-                <Feather name="map" size={24} color={theme.textSecondary} />
-                <ThemedText style={[styles.noDataText, { color: theme.textSecondary }]}>
-                  No farms found. Add your first farm!
+                    <Feather name="chevron-right" size={16} color={theme.link} />
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          </>
+        )}
+
+        {!user && (
+          <View style={styles.section}>
+            <View style={[
+              styles.infoCard,
+              { backgroundColor: `${theme.primary}15`, borderColor: theme.primary },
+              Shadows.small,
+            ]}>
+              <View style={styles.infoIcon}>
+                <Feather name="info" size={24} color={theme.primary} />
+              </View>
+              <View style={styles.infoContent}>
+                <ThemedText style={[styles.infoTitle, { color: theme.primary }]}>
+                  Get Started with AgriSense
                 </ThemedText>
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <ThemedText type="h3" style={styles.sectionTitle}>
-            Recent Activity
-          </ThemedText>
-          <View
-            style={[
-              styles.activityCard,
-              { backgroundColor: theme.cardBackground, borderColor: theme.border },
-            ]}
-          >
-            {alerts.slice(0, 2).map((alert, index) => (
-              <Pressable
-                key={alert.id}
-                onPress={() => navigation.navigate("Notifications")}
-                style={[
-                  styles.activityRow,
-                  index < 1 && { borderBottomColor: theme.border, borderBottomWidth: 1 },
-                ]}
-              >
-                <View style={styles.activityLeft}>
-                  <View style={[
-                    styles.activityIcon,
-                    { 
-                      backgroundColor: alert.type === 'critical' 
-                        ? `${theme.critical}15`
-                        : alert.type === 'warning'
-                          ? `${theme.warning}15`
-                          : alert.type === 'success'
-                            ? `${theme.success}15`
-                            : `${theme.primary}15`
-                    }
-                  ]}>
-                    <Feather 
-                      name={
-                        alert.type === 'critical' ? "alert-triangle" :
-                        alert.type === 'warning' ? "alert-circle" :
-                        alert.type === 'success' ? "check-circle" : "info"
-                      } 
-                      size={16} 
-                      color={
-                        alert.type === 'critical' ? theme.critical :
-                        alert.type === 'warning' ? theme.warning :
-                        alert.type === 'success' ? theme.success : theme.primary
-                      } 
-                    />
-                  </View>
-                  <View style={styles.activityContent}>
-                    <ThemedText style={styles.activityTitle}>{alert.title}</ThemedText>
-                    <ThemedText style={[styles.activitySubtitle, { color: theme.textSecondary }]}>
-                      {alert.category.charAt(0).toUpperCase() + alert.category.slice(1)}
-                    </ThemedText>
-                  </View>
-                </View>
-                <View style={styles.activityRight}>
-                  <ThemedText style={[styles.activityTime, { color: theme.textSecondary }]}>
-                    {new Date(alert.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <ThemedText style={[styles.infoText, { color: theme.textSecondary }]}>
+                  Login to access all features:
+                  • Monitor your farms in real-time
+                  • Control irrigation systems
+                  • Get AI-powered insights
+                  • Track environmental impact
+                </ThemedText>
+                <Pressable
+                  onPress={() => navigation.navigate('Login' as never)}
+                  style={[styles.loginActionButton, { backgroundColor: theme.primary }]}
+                >
+                  <Feather name="log-in" size={18} color="#FFFFFF" />
+                  <ThemedText style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600', marginLeft: 8 }}>
+                    Login to Get Started
                   </ThemedText>
-                  {!alert.read && (
-                    <View style={[styles.activityUnread, { backgroundColor: theme.primary }]} />
-                  )}
-                </View>
-              </Pressable>
-            ))}
-            
-            {alerts.length === 0 && (
-              <View style={styles.noActivity}>
-                <Feather name="check-circle" size={24} color={theme.textSecondary} />
-                <ThemedText style={[styles.noActivityText, { color: theme.textSecondary }]}>
-                  No recent activity
-                </ThemedText>
+                </Pressable>
               </View>
-            )}
-            
-            {alerts.length > 0 && (
-              <Pressable
-                onPress={() => navigation.navigate("Notifications")}
-                style={styles.viewAllActivity}
-              >
-                <ThemedText style={[styles.viewAllText, { color: theme.link }]}>
-                  View all activity
-                </ThemedText>
-                <Feather name="chevron-right" size={16} color={theme.link} />
-              </Pressable>
-            )}
+            </View>
           </View>
-        </View>
+        )}
       </ScrollView>
     </ThemedView>
   );
@@ -1001,6 +1092,35 @@ const styles = StyleSheet.create({
   },
   welcomeSubtitle: {
     fontSize: 16,
+  },
+  loginRequiredCard: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl,
+    borderWidth: 1,
+  },
+  loginRequiredContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  loginRequiredIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loginRequiredText: {
+    flex: 1,
+  },
+  loginRequiredTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  loginRequiredDescription: {
+    fontSize: 13,
   },
   alertBanner: {
     borderRadius: BorderRadius.lg,
@@ -1073,6 +1193,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: Spacing.md,
     marginBottom: Spacing.md,
+  },
+  noFarmsKPICard: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  noFarmsKPIContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  noFarmsKPIIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noFarmsKPIText: {
+    flex: 1,
+  },
+  noFarmsKPITitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  noFarmsKPIDescription: {
+    fontSize: 13,
   },
   quickActionsGrid: {
     flexDirection: "row",
@@ -1208,6 +1357,23 @@ const styles = StyleSheet.create({
   noDataText: {
     fontSize: 14,
     textAlign: "center",
+    marginBottom: Spacing.md,
+  },
+  addFirstFarmButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+  },
+  viewAllFields: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.xs,
+    padding: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.05)',
   },
   activityCard: {
     borderRadius: BorderRadius.lg,
@@ -1276,5 +1442,44 @@ const styles = StyleSheet.create({
   viewAllText: {
     fontSize: 14,
     fontWeight: "500",
+  },
+  infoCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.md,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+  },
+  infoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    marginTop: 4,
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  infoText: {
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: Spacing.md,
+  },
+  loginActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    alignSelf: "flex-start",
   },
 });
