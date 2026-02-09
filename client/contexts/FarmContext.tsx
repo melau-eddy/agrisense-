@@ -1,19 +1,6 @@
+// FarmContext.tsx - Updated for Realtime Database
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  getDocs, 
-  query, 
-  where,
-  orderBy,
-  serverTimestamp,
-  DocumentData,
-  QueryDocumentSnapshot
-} from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { getDatabase, ref, push, set, update, remove, get, query, orderByChild, equalTo, onValue, off } from 'firebase/database';
 import { useAuth } from '@/contexts/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -25,14 +12,23 @@ interface Farm {
   cropTypes: string[];
   soilType: string;
   irrigationType: string;
-  createdAt: any;
-  updatedAt: any;
+  createdAt: string;
+  updatedAt: string;
   userId: string;
   status: 'active' | 'inactive';
   description?: string;
   coordinates?: {
     latitude: number;
     longitude: number;
+  };
+  sensorData?: {
+    soilMoisture: number;
+    pH: number;
+    temperature: number;
+    nitrogen: number;
+    phosphorus: number;
+    potassium: number;
+    lastUpdated: string;
   };
 }
 
@@ -58,28 +54,9 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const [farms, setFarms] = useState<Farm[]>([]);
   const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null);
   const [loading, setLoading] = useState(true);
+  const [db] = useState(getDatabase());
 
-  // Convert Firestore document to Farm object
-  const documentToFarm = (doc: QueryDocumentSnapshot<DocumentData>): Farm => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      name: data.name || '',
-      location: data.location || '',
-      totalAcres: data.totalAcres || 0,
-      cropTypes: data.cropTypes || [],
-      soilType: data.soilType || '',
-      irrigationType: data.irrigationType || '',
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
-      userId: data.userId,
-      status: data.status || 'active',
-      description: data.description,
-      coordinates: data.coordinates,
-    };
-  };
-
-  // Load farms from Firestore
+  // Load farms from Realtime Database
   const loadFarms = async () => {
     if (!user) {
       setFarms([]);
@@ -92,19 +69,40 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       
       // Query farms for current user
-      const farmsRef = collection(db, 'farms');
-      const q = query(
-        farmsRef, 
-        where('userId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-      );
+      const farmsRef = ref(db, 'farms');
+      // We'll filter by userId on the client side since Realtime Database doesn't support complex queries like Firestore
       
-      const querySnapshot = await getDocs(q);
+      const snapshot = await get(farmsRef);
       const loadedFarms: Farm[] = [];
       
-      querySnapshot.forEach((doc) => {
-        loadedFarms.push(documentToFarm(doc));
-      });
+      if (snapshot.exists()) {
+        const farmsData = snapshot.val();
+        Object.keys(farmsData).forEach((key) => {
+          const farm = farmsData[key];
+          // Only include farms that belong to the current user
+          if (farm.userId === user.uid) {
+            loadedFarms.push({
+              id: key,
+              name: farm.name || '',
+              location: farm.location || '',
+              totalAcres: farm.totalAcres || 0,
+              cropTypes: farm.cropTypes || [],
+              soilType: farm.soilType || '',
+              irrigationType: farm.irrigationType || '',
+              createdAt: farm.createdAt || '',
+              updatedAt: farm.updatedAt || '',
+              userId: farm.userId,
+              status: farm.status || 'active',
+              description: farm.description,
+              coordinates: farm.coordinates,
+              sensorData: farm.sensorData
+            });
+          }
+        });
+        
+        // Sort by creation date
+        loadedFarms.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
       
       setFarms(loadedFarms);
       
@@ -112,8 +110,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       const savedSelectedFarm = await AsyncStorage.getItem(SELECTED_FARM_KEY);
       if (savedSelectedFarm) {
         const parsedFarm = JSON.parse(savedSelectedFarm);
-        // Verify the farm still exists in the loaded farms
-        const farmExists = loadedFarms.find(farm => farm.id === parsedFarm.id);
+        // Verify the farm still exists in the loaded farms and belongs to the user
+        const farmExists = loadedFarms.find(farm => farm.id === parsedFarm.id && farm.userId === user.uid);
         if (farmExists) {
           setSelectedFarm(farmExists);
         } else if (loadedFarms.length > 0) {
@@ -157,19 +155,28 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       const farmWithMetadata = {
         ...farmData,
         userId: user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         status: 'active' as const,
+        sensorData: {
+          soilMoisture: 0,
+          pH: 0,
+          temperature: 0,
+          nitrogen: 0,
+          phosphorus: 0,
+          potassium: 0,
+          lastUpdated: new Date().toISOString()
+        }
       };
 
-      const docRef = await addDoc(collection(db, 'farms'), farmWithMetadata);
+      const farmsRef = ref(db, 'farms');
+      const newFarmRef = push(farmsRef);
+      await set(newFarmRef, farmWithMetadata);
       
       // Create the new farm object with the generated ID
       const newFarm: Farm = {
-        id: docRef.id,
+        id: newFarmRef.key!,
         ...farmWithMetadata,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       };
       
       // Update local state
@@ -194,22 +201,22 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   // Update an existing farm
   const updateFarm = async (farmId: string, farmData: Partial<Farm>): Promise<{ success: boolean; error?: string }> => {
     try {
-      const farmRef = doc(db, 'farms', farmId);
-      await updateDoc(farmRef, {
+      const farmRef = ref(db, `farms/${farmId}`);
+      await update(farmRef, {
         ...farmData,
-        updatedAt: serverTimestamp(),
+        updatedAt: new Date().toISOString(),
       });
       
       // Update local state
       setFarms(prev => prev.map(farm => 
         farm.id === farmId 
-          ? { ...farm, ...farmData, updatedAt: new Date() }
+          ? { ...farm, ...farmData, updatedAt: new Date().toISOString() }
           : farm
       ));
       
       // Update selected farm if it's the one being updated
       if (selectedFarm?.id === farmId) {
-        const updatedFarm = { ...selectedFarm, ...farmData, updatedAt: new Date() };
+        const updatedFarm = { ...selectedFarm, ...farmData, updatedAt: new Date().toISOString() };
         setSelectedFarm(updatedFarm);
         await AsyncStorage.setItem(SELECTED_FARM_KEY, JSON.stringify(updatedFarm));
       }
@@ -230,7 +237,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       // Check if this is the selected farm
       const isSelectedFarm = selectedFarm?.id === farmId;
       
-      await deleteDoc(doc(db, 'farms', farmId));
+      const farmRef = ref(db, `farms/${farmId}`);
+      await remove(farmRef);
       
       // Update local state
       setFarms(prev => prev.filter(farm => farm.id !== farmId));
