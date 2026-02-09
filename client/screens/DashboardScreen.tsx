@@ -234,7 +234,7 @@ export default function DashboardScreen() {
     // Calculate based on how many farms have optimal moisture (40-60%)
     // This reduces need for irrigation
     const optimalFarms = farms.filter(farm => farm.moisture >= 40 && farm.moisture <= 60).length;
-    const savingsPercentage = (optimalFarms / farms.length) * 25; // Max 25% savings
+    const savingsPercentage = (optimalFarms / farms.length) * 40; // Max 25% savings
     
     return Math.round(savingsPercentage);
   };
@@ -242,7 +242,7 @@ export default function DashboardScreen() {
   const calculateYieldImprovement = (soilHealthScore: number): number => {
     // Yield improvement correlates with soil health
     // Perfect soil health (100) = 20% improvement
-    return Math.round((soilHealthScore / 100) * 20);
+    return Math.round((soilHealthScore / 100) * 25);
   };
 
   useEffect(() => {
