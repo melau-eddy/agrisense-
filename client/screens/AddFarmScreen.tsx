@@ -10,13 +10,14 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDatabase, ref, set, push } from 'firebase/database';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { AuthInput } from '@/components/auth/AuthInput';
 import { AuthButton } from '@/components/auth/AuthButton';
 import { useTheme } from '@/hooks/useTheme';
+import { useFarms } from '@/contexts/FarmContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Spacing, BorderRadius } from '@/constants/theme';
 
 // Crop types options
@@ -73,6 +74,8 @@ interface FarmFormData {
 export default function AddFarmScreen() {
   const navigation = useNavigation();
   const { theme } = useTheme();
+  const { addFarm } = useFarms();
+  const { user } = useAuth();
   
   const [formData, setFormData] = useState<FarmFormData>({
     name: '',
@@ -88,8 +91,6 @@ export default function AddFarmScreen() {
   const [selectedCrops, setSelectedCrops] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-
-  const db = getDatabase();
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -143,6 +144,11 @@ export default function AddFarmScreen() {
   const handleSubmit = async () => {
     if (!validateForm()) return;
 
+    if (!user) {
+      Alert.alert('Authentication Required', 'Please login to add a farm.');
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -158,45 +164,44 @@ export default function AddFarmScreen() {
           latitude: parseFloat(formData.latitude),
           longitude: parseFloat(formData.longitude),
         } : null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        status: 'healthy' as const,
+        status: 'active' as const,
       };
 
-      // Save to Firebase Realtime Database
-      const farmsRef = ref(db, 'farms');
-      const newFarmRef = push(farmsRef);
-      await set(newFarmRef, farmData);
+      const result = await addFarm(farmData);
 
-      Alert.alert(
-        '✅ Farm Added Successfully',
-        `Your farm "${formData.name}" has been added to the database.`,
-        [
-          {
-            text: 'View Farms',
-            onPress: () => navigation.goBack(),
-          },
-          {
-            text: 'Add Another',
-            onPress: () => {
-              // Reset form
-              setFormData({
-                name: '',
-                location: '',
-                totalAcres: '',
-                description: '',
-                soilType: '',
-                irrigationType: '',
-                latitude: '',
-                longitude: '',
-              });
-              setSelectedCrops([]);
-              setErrors({});
+      if (result.success) {
+        Alert.alert(
+          '✅ Farm Added Successfully',
+          `Your farm "${formData.name}" has been added to your account.`,
+          [
+            {
+              text: 'View My Farms',
+              onPress: () => navigation.goBack(),
             },
-          },
-        ]
-      );
-    } catch (error) {
+            {
+              text: 'Add Another',
+              onPress: () => {
+                // Reset form
+                setFormData({
+                  name: '',
+                  location: '',
+                  totalAcres: '',
+                  description: '',
+                  soilType: '',
+                  irrigationType: '',
+                  latitude: '',
+                  longitude: '',
+                });
+                setSelectedCrops([]);
+                setErrors({});
+              },
+            },
+          ]
+        );
+      } else {
+        Alert.alert('❌ Error', result.error || 'Failed to add farm. Please try again.');
+      }
+    } catch (error: any) {
       console.error('Error adding farm:', error);
       Alert.alert('❌ Error', 'Failed to add farm. Please try again.');
     } finally {
@@ -260,132 +265,160 @@ export default function AddFarmScreen() {
             Add your farm details to start monitoring and controlling irrigation
           </ThemedText>
 
-          <View style={styles.form}>
-            <AuthInput
-              label="Farm Name *"
-              placeholder="Enter farm name"
-              value={formData.name}
-              onChangeText={(text) => setFormData({ ...formData, name: text })}
-              error={errors.name}
-              leftIcon={<Feather name="map-pin" size={20} color={theme.textSecondary} />}
-              autoCapitalize="words"
-            />
-
-            <AuthInput
-              label="Location *"
-              placeholder="City, State, Country"
-              value={formData.location}
-              onChangeText={(text) => setFormData({ ...formData, location: text })}
-              error={errors.location}
-              leftIcon={<Feather name="map" size={20} color={theme.textSecondary} />}
-              autoCapitalize="words"
-            />
-
-            <AuthInput
-              label="Total Acres *"
-              placeholder="Enter total acres"
-              value={formData.totalAcres}
-              onChangeText={(text) => setFormData({ ...formData, totalAcres: text })}
-              error={errors.totalAcres}
-              keyboardType="decimal-pad"
-              leftIcon={<Feather name="maximize" size={20} color={theme.textSecondary} />}
-            />
-
-            <View style={styles.section}>
-              <ThemedText style={[styles.sectionLabel, { color: theme.text }]}>
-                Crop Types *
+          {!user ? (
+            <View style={styles.notLoggedInContainer}>
+              <Feather name="alert-circle" size={48} color={theme.warning} />
+              <ThemedText type="h3" style={styles.notLoggedInTitle}>
+                Authentication Required
               </ThemedText>
-              {errors.crops && (
-                <ThemedText style={[styles.errorText, { color: theme.critical }]}>
-                  {errors.crops}
+              <ThemedText style={[styles.notLoggedInText, { color: theme.textSecondary }]}>
+                Please login to add a farm. Farms are tied to your account for secure access.
+              </ThemedText>
+              <AuthButton
+                title="Go to Login"
+                onPress={() => navigation.navigate('Login' as never)}
+                variant="primary"
+                style={styles.loginButton}
+              />
+            </View>
+          ) : (
+            <View style={styles.form}>
+              <AuthInput
+                label="Farm Name *"
+                placeholder="Enter farm name"
+                value={formData.name}
+                onChangeText={(text) => setFormData({ ...formData, name: text })}
+                error={errors.name}
+                leftIcon={<Feather name="map-pin" size={20} color={theme.textSecondary} />}
+                autoCapitalize="words"
+              />
+
+              <AuthInput
+                label="Location *"
+                placeholder="City, State, Country"
+                value={formData.location}
+                onChangeText={(text) => setFormData({ ...formData, location: text })}
+                error={errors.location}
+                leftIcon={<Feather name="map" size={20} color={theme.textSecondary} />}
+                autoCapitalize="words"
+              />
+
+              <AuthInput
+                label="Total Acres *"
+                placeholder="Enter total acres"
+                value={formData.totalAcres}
+                onChangeText={(text) => setFormData({ ...formData, totalAcres: text })}
+                error={errors.totalAcres}
+                keyboardType="decimal-pad"
+                leftIcon={<Feather name="maximize" size={20} color={theme.textSecondary} />}
+              />
+
+              <View style={styles.section}>
+                <ThemedText style={[styles.sectionLabel, { color: theme.text }]}>
+                  Crop Types *
                 </ThemedText>
-              )}
-              <View style={styles.chipsContainer}>
-                {CROP_TYPES.map(renderChip)}
+                {errors.crops && (
+                  <ThemedText style={[styles.errorText, { color: theme.critical }]}>
+                    {errors.crops}
+                  </ThemedText>
+                )}
+                <View style={styles.chipsContainer}>
+                  {CROP_TYPES.map(renderChip)}
+                </View>
               </View>
-            </View>
 
-            <View style={styles.row}>
-              <View style={[styles.halfInput, { marginRight: Spacing.sm }]}>
-                <AuthInput
-                  label="Soil Type"
-                  placeholder="Select soil type"
-                  value={formData.soilType}
-                  onChangeText={(text) => setFormData({ ...formData, soilType: text })}
-                  leftIcon={<Feather name="layers" size={20} color={theme.textSecondary} />}
-                />
-              </View>
-              <View style={[styles.halfInput, { marginLeft: Spacing.sm }]}>
-                <AuthInput
-                  label="Irrigation Type"
-                  placeholder="Select irrigation"
-                  value={formData.irrigationType}
-                  onChangeText={(text) => setFormData({ ...formData, irrigationType: text })}
-                  leftIcon={<Feather name="droplet" size={20} color={theme.textSecondary} />}
-                />
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <ThemedText style={[styles.sectionLabel, { color: theme.text }]}>
-                Coordinates (Optional)
-              </ThemedText>
               <View style={styles.row}>
                 <View style={[styles.halfInput, { marginRight: Spacing.sm }]}>
                   <AuthInput
-                    placeholder="Latitude"
-                    value={formData.latitude}
-                    onChangeText={(text) => setFormData({ ...formData, latitude: text })}
-                    error={errors.latitude}
-                    keyboardType="numbers-and-punctuation"
+                    label="Soil Type"
+                    placeholder="Select soil type"
+                    value={formData.soilType}
+                    onChangeText={(text) => setFormData({ ...formData, soilType: text })}
+                    leftIcon={<Feather name="layers" size={20} color={theme.textSecondary} />}
                   />
                 </View>
                 <View style={[styles.halfInput, { marginLeft: Spacing.sm }]}>
                   <AuthInput
-                    placeholder="Longitude"
-                    value={formData.longitude}
-                    onChangeText={(text) => setFormData({ ...formData, longitude: text })}
-                    error={errors.longitude}
-                    keyboardType="numbers-and-punctuation"
+                    label="Irrigation Type"
+                    placeholder="Select irrigation"
+                    value={formData.irrigationType}
+                    onChangeText={(text) => setFormData({ ...formData, irrigationType: text })}
+                    leftIcon={<Feather name="droplet" size={20} color={theme.textSecondary} />}
                   />
                 </View>
               </View>
-            </View>
 
-            <AuthInput
-              label="Description (Optional)"
-              placeholder="Additional notes about your farm"
-              value={formData.description}
-              onChangeText={(text) => setFormData({ ...formData, description: text })}
-              multiline
-              numberOfLines={3}
-              style={styles.textArea}
-              leftIcon={<Feather name="edit" size={20} color={theme.textSecondary} />}
-            />
+              <View style={styles.section}>
+                <ThemedText style={[styles.sectionLabel, { color: theme.text }]}>
+                  Coordinates (Optional)
+                </ThemedText>
+                <View style={styles.row}>
+                  <View style={[styles.halfInput, { marginRight: Spacing.sm }]}>
+                    <AuthInput
+                      placeholder="Latitude"
+                      value={formData.latitude}
+                      onChangeText={(text) => setFormData({ ...formData, latitude: text })}
+                      error={errors.latitude}
+                      keyboardType="numbers-and-punctuation"
+                    />
+                  </View>
+                  <View style={[styles.halfInput, { marginLeft: Spacing.sm }]}>
+                    <AuthInput
+                      placeholder="Longitude"
+                      value={formData.longitude}
+                      onChangeText={(text) => setFormData({ ...formData, longitude: text })}
+                      error={errors.longitude}
+                      keyboardType="numbers-and-punctuation"
+                    />
+                  </View>
+                </View>
+              </View>
 
-            <View style={styles.buttonContainer}>
-              <AuthButton
-                title="Cancel"
-                onPress={() => navigation.goBack()}
-                variant="outline"
-                style={styles.cancelButton}
+              <AuthInput
+                label="Description (Optional)"
+                placeholder="Additional notes about your farm"
+                value={formData.description}
+                onChangeText={(text) => setFormData({ ...formData, description: text })}
+                multiline
+                numberOfLines={3}
+                style={styles.textArea}
+                leftIcon={<Feather name="edit" size={20} color={theme.textSecondary} />}
               />
-              <AuthButton
-                title="Add Farm"
-                onPress={handleSubmit}
-                loading={loading}
-                variant="primary"
-                style={styles.submitButton}
-                disabled={
-                  !formData.name.trim() ||
-                  !formData.location.trim() ||
-                  !formData.totalAcres.trim() ||
-                  selectedCrops.length === 0 ||
-                  loading
-                }
-              />
+
+              <View style={styles.buttonContainer}>
+                <AuthButton
+                  title="Cancel"
+                  onPress={() => navigation.goBack()}
+                  variant="outline"
+                  style={styles.cancelButton}
+                />
+                <AuthButton
+                  title="Add Farm"
+                  onPress={handleSubmit}
+                  loading={loading}
+                  variant="primary"
+                  style={styles.submitButton}
+                  disabled={
+                    !formData.name.trim() ||
+                    !formData.location.trim() ||
+                    !formData.totalAcres.trim() ||
+                    selectedCrops.length === 0 ||
+                    loading ||
+                    !user
+                  }
+                />
+              </View>
+
+              <View style={styles.userInfoSection}>
+                <View style={[styles.userInfoCard, { backgroundColor: theme.backgroundSecondary }]}>
+                  <Feather name="user" size={16} color={theme.textSecondary} />
+                  <ThemedText style={[styles.userInfoText, { color: theme.textSecondary }]}>
+                    Farm will be added to your account: {user.email}
+                  </ThemedText>
+                </View>
+              </View>
             </View>
-          </View>
+          )}
         </ScrollView>
       </ThemedView>
     </KeyboardAvoidingView>
@@ -412,6 +445,26 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     marginBottom: Spacing.xl,
+  },
+  notLoggedInContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xl,
+    paddingTop: Spacing['2xl'],
+  },
+  notLoggedInTitle: {
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.md,
+    textAlign: 'center',
+  },
+  notLoggedInText: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
+    lineHeight: 20,
+  },
+  loginButton: {
+    marginTop: Spacing.md,
   },
   form: {
     gap: Spacing.lg,
@@ -465,6 +518,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   submitButton: {
+    flex: 1,
+  },
+  userInfoSection: {
+    marginTop: Spacing.lg,
+  },
+  userInfoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    gap: Spacing.sm,
+  },
+  userInfoText: {
+    fontSize: 12,
     flex: 1,
   },
 });
